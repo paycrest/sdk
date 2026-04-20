@@ -99,6 +99,22 @@ npm i -g @bazel/bazelisk
 bazelisk test //...
 ```
 
+## Cloud agent environment setup
+
+Cloud agents for this repository are expected to run with a repo-level environment config at `.cursor/environment.json`.
+
+The install step uses `.cursor/scripts/install-cloud-toolchains.sh` to provision baseline tooling so smoke tests run without manual bootstrap:
+
+- `go1.26.0` available on `PATH`
+- Rust stable toolchain with `rustfmt` and `clippy`
+- default `node`/`npm` binaries
+
+You can validate the environment by running:
+
+```bash
+./scripts/tests/run_all_smoke.sh
+```
+
 ## Quick usage examples
 
 ### TypeScript
