@@ -7,6 +7,11 @@ on:
         description: "Semver to validate (e.g. 2.1.0)"
         required: true
         type: string
+      run_integration:
+        description: "Run integration harness (requires repository secrets)"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   release-dry-run:
@@ -58,3 +63,11 @@ jobs:
         env:
           RELEASE_SKIP_SMOKE: "1"
         run: ./scripts/release/release_all.sh "${{ inputs.version }}" --dry-run
+
+      - name: Optionally run integration harness
+        if: ${{ inputs.run_integration }}
+        env:
+          PAYCREST_BASE_URL: ${{ vars.PAYCREST_BASE_URL != '' && vars.PAYCREST_BASE_URL || 'https://api.paycrest.io/v2' }}
+          PAYCREST_SENDER_API_KEY: ${{ secrets.PAYCREST_SENDER_API_KEY }}
+          PAYCREST_PROVIDER_API_KEY: ${{ secrets.PAYCREST_PROVIDER_API_KEY }}
+        run: ./scripts/tests/run_all_integration.sh
