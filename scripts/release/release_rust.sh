@@ -11,7 +11,7 @@ source "$ROOT/scripts/release/common.sh"
 
 MODE="$(release_mode_from_arg "$MODE_ARG")"
 require_semver "$VERSION"
-ensure_clean_worktree "$ROOT"
+ensure_clean_worktree "$ROOT" "release_rust"
 require_cmd cargo
 verify_manifest_version "$SDK_DIR/Cargo.toml" "^version = \"$VERSION\"$"
 log_release_mode "Rust SDK" "$VERSION" "$MODE"

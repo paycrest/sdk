@@ -13,6 +13,7 @@ ensure_clean_worktree "$ROOT"
 require_semver "$VERSION"
 maybe_run_smoke_suite "$ROOT"
 require_cmd go1.26.0
+confirm_publish_if_needed "Go SDK" "$VERSION" "$MODE"
 
 log_release_mode "Go SDK" "$VERSION" "$MODE"
 

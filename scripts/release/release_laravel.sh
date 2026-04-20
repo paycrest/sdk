@@ -13,10 +13,11 @@ MODE="$(release_mode_from_arg "$MODE_ARG")"
 
 require_semver "$VERSION"
 ensure_clean_worktree "$ROOT"
-maybe_run_smoke_suite "$ROOT"
-confirm_publish_if_needed "Laravel SDK" "$VERSION" "$MODE"
+require_cmd git
 require_cmd php
 require_cmd composer
+maybe_run_smoke_suite "$ROOT"
+confirm_publish_if_needed "Laravel SDK" "$VERSION" "$MODE"
 log_release_mode "Laravel SDK" "$VERSION" "$MODE"
 
 cd "$SDK_DIR"

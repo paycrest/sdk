@@ -14,15 +14,7 @@ ensure_clean_worktree "$ROOT"
 require_cmd git
 log_release_mode "all SDKs" "$VERSION" "$MODE"
 
-if [[ "$MODE" == "publish" ]]; then
-    echo "Release mode is publish. This will attempt to publish artifacts."
-    echo "Type 'release $VERSION' to continue:"
-    read -r confirmation
-    if [[ "$confirmation" != "release $VERSION" ]]; then
-        echo "Confirmation mismatch, aborting." >&2
-        exit 1
-    fi
-else
+if [[ "$MODE" == "dry-run" ]]; then
     echo "release_all: running in dry-run mode"
 fi
 
