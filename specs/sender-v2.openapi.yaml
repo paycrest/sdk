@@ -1,0 +1,371 @@
+openapi: 3.0.3
+info:
+  title: Paycrest Sender SDK Contract
+  version: 2.0.0
+  description: |
+    Canonical contract for Paycrest Sender SDK v2 across all supported languages.
+    This file intentionally captures the sender-focused SDK surface.
+servers:
+  - url: https://api.paycrest.io/v2
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: API-Key
+  schemas:
+    StandardResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+        data:
+          type: object
+    ErrorResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: error
+        message:
+          type: string
+        data:
+          nullable: true
+          oneOf:
+            - type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+            - type: object
+              additionalProperties: true
+    V2FiatRecipient:
+      type: object
+      required: [institution, accountIdentifier, accountName, memo]
+      properties:
+        institution:
+          type: string
+        accountIdentifier:
+          type: string
+        accountName:
+          type: string
+        memo:
+          type: string
+    V2FiatRefundAccount:
+      type: object
+      required: [institution, accountIdentifier, accountName]
+      properties:
+        institution:
+          type: string
+        accountIdentifier:
+          type: string
+        accountName:
+          type: string
+    V2CryptoRecipient:
+      type: object
+      required: [address, network]
+      properties:
+        address:
+          type: string
+        network:
+          type: string
+    V2CryptoSource:
+      type: object
+      required: [type, currency, network, refundAddress]
+      properties:
+        type:
+          type: string
+          enum: [crypto]
+        currency:
+          type: string
+        network:
+          type: string
+        refundAddress:
+          type: string
+    V2FiatSource:
+      type: object
+      required: [type, currency, refundAccount]
+      properties:
+        type:
+          type: string
+          enum: [fiat]
+        currency:
+          type: string
+        country:
+          type: string
+        refundAccount:
+          $ref: '#/components/schemas/V2FiatRefundAccount'
+    V2FiatDestination:
+      type: object
+      required: [type, currency, recipient]
+      properties:
+        type:
+          type: string
+          enum: [fiat]
+        currency:
+          type: string
+        country:
+          type: string
+        providerId:
+          type: string
+        recipient:
+          $ref: '#/components/schemas/V2FiatRecipient'
+    V2CryptoDestination:
+      type: object
+      required: [type, currency, recipient]
+      properties:
+        type:
+          type: string
+          enum: [crypto]
+        currency:
+          type: string
+        providerId:
+          type: string
+        recipient:
+          $ref: '#/components/schemas/V2CryptoRecipient'
+    V2CryptoProviderAccount:
+      type: object
+      properties:
+        network:
+          type: string
+        receiveAddress:
+          type: string
+        validUntil:
+          type: string
+          format: date-time
+    V2FiatProviderAccount:
+      type: object
+      properties:
+        institution:
+          type: string
+        accountIdentifier:
+          type: string
+        accountName:
+          type: string
+        amountToTransfer:
+          type: string
+        currency:
+          type: string
+        validUntil:
+          type: string
+          format: date-time
+    V2PaymentOrderPayload:
+      type: object
+      required: [amount, source, destination]
+      properties:
+        amount:
+          type: string
+        amountIn:
+          type: string
+          enum: [crypto, fiat]
+        rate:
+          type: string
+        senderFee:
+          type: string
+        senderFeePercent:
+          type: string
+        reference:
+          type: string
+        source:
+          oneOf:
+            - $ref: '#/components/schemas/V2CryptoSource'
+            - $ref: '#/components/schemas/V2FiatSource'
+        destination:
+          oneOf:
+            - $ref: '#/components/schemas/V2FiatDestination'
+            - $ref: '#/components/schemas/V2CryptoDestination'
+    V2PaymentOrderGetResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        direction:
+          type: string
+        orderType:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        amount:
+          type: string
+        amountInUsd:
+          type: string
+        amountPaid:
+          type: string
+        amountReturned:
+          type: string
+        percentSettled:
+          type: string
+        rate:
+          type: string
+        senderFee:
+          type: string
+        senderFeePercent:
+          type: string
+        transactionFee:
+          type: string
+        reference:
+          type: string
+        txHash:
+          type: string
+        providerAccount:
+          oneOf:
+            - $ref: '#/components/schemas/V2CryptoProviderAccount'
+            - $ref: '#/components/schemas/V2FiatProviderAccount'
+        source:
+          oneOf:
+            - $ref: '#/components/schemas/V2CryptoSource'
+            - $ref: '#/components/schemas/V2FiatSource'
+        destination:
+          oneOf:
+            - $ref: '#/components/schemas/V2FiatDestination'
+            - $ref: '#/components/schemas/V2CryptoDestination'
+    V2PaymentOrderListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        orders:
+          type: array
+          items:
+            $ref: '#/components/schemas/V2PaymentOrderGetResponse'
+    SenderStatsResponse:
+      type: object
+      properties:
+        totalOrders:
+          type: integer
+        totalOrderVolume:
+          type: string
+        totalFeeEarnings:
+          type: string
+    VerifyAccountRequest:
+      type: object
+      required: [institution, accountIdentifier]
+      properties:
+        institution:
+          type: string
+        accountIdentifier:
+          type: string
+paths:
+  /sender/orders:
+    post:
+      summary: Create payment order
+      security: [{ ApiKeyAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/V2PaymentOrderPayload'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/StandardResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/V2PaymentOrderGetResponse'
+    get:
+      summary: List payment orders
+      security: [{ ApiKeyAuth: [] }]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, default: 10 }
+        - in: query
+          name: status
+          schema: { type: string }
+      responses:
+        '200':
+          description: List orders
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/StandardResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/V2PaymentOrderListResponse'
+  /sender/orders/{id}:
+    get:
+      summary: Get payment order
+      security: [{ ApiKeyAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/StandardResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/V2PaymentOrderGetResponse'
+  /sender/stats:
+    get:
+      summary: Get sender stats
+      security: [{ ApiKeyAuth: [] }]
+      responses:
+        '200':
+          description: Sender stats
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/StandardResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SenderStatsResponse'
+  /verify-account:
+    post:
+      summary: Verify account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyAccountRequest'
+      responses:
+        '200':
+          description: Account verified
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/StandardResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: string

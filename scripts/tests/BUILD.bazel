@@ -1,0 +1,10 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "run_all_smoke.sh",
+    "smoke_typescript.sh",
+    "smoke_python.sh",
+    "smoke_go.sh",
+    "smoke_rust.sh",
+    "smoke_laravel.sh",
+])

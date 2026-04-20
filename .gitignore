@@ -1,0 +1,24 @@
+# Bazel
+bazel-*
+.bazeliskrc
+
+# TypeScript
+node_modules/
+sdks/typescript/dist/
+
+# Python
+__pycache__/
+.pytest_cache/
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Go
+sdks/go/bin/
+
+# Rust
+sdks/rust/target/
+
+# PHP / Laravel
+vendor/

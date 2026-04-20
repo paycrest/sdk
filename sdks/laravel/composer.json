@@ -1,0 +1,25 @@
+{
+  "name": "paycrest/sdk-laravel",
+  "description": "Official Paycrest Sender SDK v2 for Laravel",
+  "type": "library",
+  "license": "AGPL-3.0-or-later",
+  "autoload": {
+    "psr-4": {
+      "Paycrest\SDK\": "src/"
+    }
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "Paycrest\SDK\PaycrestServiceProvider"
+      ],
+      "aliases": {
+        "Paycrest": "Paycrest\SDK\Facades\Paycrest"
+      }
+    }
+  },
+  "require": {
+    "php": ">=8.2",
+    "illuminate/support": "^11.0 || ^12.0"
+  }
+}
