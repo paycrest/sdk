@@ -85,13 +85,14 @@ This repository now includes manual publish workflows per registry:
 All publish workflows:
 
 - run only via `workflow_dispatch`,
-- run smoke checks before publish,
-- require explicit `confirm_publish: true`,
+- support explicit dry-run/publish toggles,
+- run validation checks before publish,
+- require publish confirmation (`RELEASE_CONFIRM=YES`) for publish mode,
 - validate the requested version against package manifests.
 
 ### Required repository secrets
 
 - `NPM_TOKEN` for npm publish
 - `PYPI_API_TOKEN` for PyPI publish
-- `CARGO_REGISTRY_TOKEN` for crates.io publish
-- `PACKAGIST_UPDATE_URL` (optional) for Packagist refresh webhook
+- `CRATES_IO_TOKEN` for crates.io publish
+- `PACKAGIST_WEBHOOK_URL` (optional) for Packagist refresh webhook

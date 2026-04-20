@@ -3,12 +3,12 @@ set -euo pipefail
 
 VERSION="${1:?Usage: release_typescript.sh <version> [--dry-run|--publish]}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-MODE="${2:-}"
+MODE_ARG="${2:---dry-run}"
 SDK_DIR="$ROOT/sdks/typescript"
 
 # shellcheck source=common.sh
 source "$ROOT/scripts/release/common.sh"
-MODE="$(release_mode_from_arg "$MODE")"
+MODE="$(release_mode_from_arg "$MODE_ARG")"
 require_semver "$VERSION"
 ensure_clean_worktree "$ROOT"
 require_cmd node
