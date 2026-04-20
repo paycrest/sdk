@@ -26,6 +26,17 @@ $SUDO apt-get install -y --no-install-recommends \
 # Ensure Node.js and npm defaults are available from apt.
 $SUDO apt-get install -y --no-install-recommends nodejs npm
 
+# Install PHP toolchain required for Laravel SDK tests.
+$SUDO apt-get install -y --no-install-recommends \
+    php-cli \
+    php-mbstring \
+    php-xml \
+    php-curl \
+    php-zip \
+    php-bcmath \
+    php-intl \
+    composer
+
 # Ensure Go launcher for versioned toolchains is available.
 $SUDO apt-get install -y --no-install-recommends golang-go
 
@@ -68,7 +79,11 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # Validate required tools are on PATH for smoke scripts.
 command -v node >/dev/null
 command -v npm >/dev/null
+command -v php >/dev/null
+command -v composer >/dev/null
 command -v cargo >/dev/null
 command -v rustfmt >/dev/null
 command -v clippy-driver >/dev/null
 go1.26.0 version >/dev/null
+php --version >/dev/null
+composer --version >/dev/null
