@@ -8,35 +8,22 @@ use crate::models::ApiResponse;
 pub const DEFAULT_BASE_URL: &str = "https://api.paycrest.io/v2";
 
 #[derive(Clone)]
-pub struct PaycrestClient {
+struct HttpContext {
     api_key: String,
     base_url: String,
     http: reqwest::Client,
 }
 
-impl PaycrestClient {
-    pub fn new(api_key: impl Into<String>) -> Self {
+impl HttpContext {
+    fn new(api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
         Self {
             api_key: api_key.into(),
-            base_url: DEFAULT_BASE_URL.to_string(),
+            base_url: base_url.into(),
             http: reqwest::Client::new(),
         }
     }
 
-    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
-        self.base_url = base_url.into();
-        self
-    }
-
-    pub fn sender(&self) -> crate::sender::SenderClient {
-        crate::sender::SenderClient::new(self.clone())
-    }
-
-    pub fn provider(&self) -> Result<(), PaycrestError> {
-        Err(PaycrestError::ProviderUnavailable)
-    }
-
-    pub(crate) async fn request<T: DeserializeOwned>(
+    async fn request<T: DeserializeOwned>(
         &self,
         method: Method,
         path: &str,
@@ -80,3 +67,89 @@ impl PaycrestClient {
         Ok(serde_json::from_str(&text)?)
     }
 }
+
+pub struct PaycrestClient {
+    sender_http: Option<HttpContext>,
+    provider_http: Option<HttpContext>,
+}
+
+impl PaycrestClient {
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self::new_with_options(ClientOptions {
+            api_key: Some(api_key.into()),
+            sender_api_key: None,
+            provider_api_key: None,
+            base_url: DEFAULT_BASE_URL.to_string(),
+        })
+    }
+
+    pub fn new_with_options(options: ClientOptions) -> Self {
+        let sender_key = options.sender_api_key.or_else(|| options.api_key.clone());
+        let provider_key = options.provider_api_key.or(options.api_key);
+
+        let sender_http = sender_key.map(|k| HttpContext::new(k, options.base_url.clone()));
+        let provider_http = provider_key.map(|k| HttpContext::new(k, options.base_url));
+
+        Self {
+            sender_http,
+            provider_http,
+        }
+    }
+
+    pub fn sender(&self) -> Result<crate::sender::SenderClient, PaycrestError> {
+        let Some(http) = self.sender_http.clone() else {
+            return Err(PaycrestError::MissingSenderCredentials);
+        };
+        Ok(crate::sender::SenderClient::new(http))
+    }
+
+    pub fn provider(&self) -> Result<crate::provider::ProviderClient, PaycrestError> {
+        let Some(http) = self.provider_http.clone() else {
+            return Err(PaycrestError::MissingProviderCredentials);
+        };
+        Ok(crate::provider::ProviderClient::new(http))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ClientOptions {
+    pub api_key: Option<String>,
+    pub sender_api_key: Option<String>,
+    pub provider_api_key: Option<String>,
+    pub base_url: String,
+}
+
+impl Default for ClientOptions {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            sender_api_key: None,
+            provider_api_key: None,
+            base_url: DEFAULT_BASE_URL.to_string(),
+        }
+    }
+}
+
+pub(crate) trait RequestExecutor {
+    fn request<T: DeserializeOwned + Send + 'static>(
+        &self,
+        method: Method,
+        path: String,
+        query: Option<Vec<(&'static str, String)>>,
+        body: Option<Value>,
+    ) -> impl std::future::Future<Output = Result<ApiResponse<T>, PaycrestError>> + Send;
+}
+
+impl RequestExecutor for HttpContext {
+    async fn request<T: DeserializeOwned + Send + 'static>(
+        &self,
+        method: Method,
+        path: String,
+        query: Option<Vec<(&'static str, String)>>,
+        body: Option<Value>,
+    ) -> Result<ApiResponse<T>, PaycrestError> {
+        self.request(method, &path, query.as_deref(), body).await
+    }
+}
+
+pub(crate) use HttpContext as ClientHttp;

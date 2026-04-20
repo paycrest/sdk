@@ -42,11 +42,14 @@ v2 scope today is **Sender**. The repository structure intentionally supports fu
 
 Every language SDK exposes the same sender primitives:
 
-- `sender.createOrder(payload)`
+- `sender.createOrder(payload)` (auto-detects onramp/offramp)
+- `sender.createOfframpOrder(payload)`
+- `sender.createOnrampOrder(payload)`
 - `sender.listOrders({ page, pageSize, status })`
 - `sender.getOrder(orderId)`
 - `sender.getStats()`
 - `sender.verifyAccount({ institution, accountIdentifier })`
+- `sender.getTokenRate({ network, token, amount, fiat, side })`
 - `verifyWebhookSignature(rawBody, signature, secret)`
 
 ## API defaults
@@ -54,6 +57,26 @@ Every language SDK exposes the same sender primitives:
 - Base URL: `https://api.paycrest.io/v2`
 - Auth header: `API-Key: <YOUR_API_KEY>`
 - Content-Type: `application/json`
+
+## Rate-first order creation (important)
+
+For sender flows, SDKs now default to **rate-first** behavior:
+
+- If `rate` is omitted in create-order payloads, the SDK first calls `GET /rates/{network}/{token}/{amount}/{fiat}`.
+- It uses `side=sell` for offramp and `side=buy` for onramp, then injects the returned rate into `POST /sender/orders`.
+- This reduces refund risk from stale/manual rates and improves provider match likelihood.
+
+Manual `rate` override is still supported, but not recommended for normal integrations.
+
+## Sender vs provider authentication
+
+Authentication may differ between sender and provider identities. SDKs support separate initialization keys:
+
+- TypeScript: `senderApiKey`, `providerApiKey` (or shared `apiKey`)
+- Python: `sender_api_key`, `provider_api_key` (or shared `api_key`)
+- Go: `ClientOptions{SenderAPIKey, ProviderAPIKey}`
+- Rust: `ClientOptions { sender_api_key, provider_api_key }`
+- Laravel: `PAYCREST_SENDER_API_KEY`, `PAYCREST_PROVIDER_API_KEY`
 
 ## Build and test with Bazel
 
@@ -83,9 +106,22 @@ bazelisk test //...
 ```ts
 import { createPaycrestClient } from "@paycrest/sdk";
 
-const client = createPaycrestClient({ apiKey: process.env.PAYCREST_API_KEY! });
-const stats = await client.sender().getStats();
-console.log(stats);
+const client = createPaycrestClient({
+  senderApiKey: process.env.PAYCREST_SENDER_API_KEY!,
+  providerApiKey: process.env.PAYCREST_PROVIDER_API_KEY,
+});
+
+const order = await client.sender().createOfframpOrder({
+  amount: "100",
+  source: { type: "crypto", currency: "USDT", network: "base", refundAddress: "0xabc" },
+  destination: {
+    type: "fiat",
+    currency: "NGN",
+    recipient: { institution: "GTBINGLA", accountIdentifier: "1234567890", accountName: "John", memo: "Payout" },
+  },
+});
+
+console.log(order);
 ```
 
 ### Python
@@ -93,30 +129,54 @@ console.log(stats);
 ```python
 from paycrest_sdk import PaycrestClient
 
-client = PaycrestClient(api_key="YOUR_API_KEY")
-print(client.sender().get_stats())
+client = PaycrestClient(sender_api_key="SENDER_KEY")
+order = client.sender().create_offramp_order({
+    "amount": "100",
+    "source": {"type": "crypto", "currency": "USDT", "network": "base", "refundAddress": "0xabc"},
+    "destination": {
+        "type": "fiat",
+        "currency": "NGN",
+        "recipient": {"institution": "GTBINGLA", "accountIdentifier": "1234567890", "accountName": "John", "memo": "Payout"}
+    }
+})
+print(order)
 ```
 
 ### Go
 
 ```go
-client := sdk.NewClient("YOUR_API_KEY", sdk.DefaultBaseURL)
-stats, err := client.Sender().GetStats(context.Background())
+client := sdk.NewClientWithOptions(sdk.ClientOptions{
+    SenderAPIKey: "SENDER_KEY",
+    BaseURL: sdk.DefaultBaseURL,
+})
+sender, _ := client.Sender()
+stats, err := sender.GetStats(context.Background())
 ```
 
 ### Rust
 
 ```rust
-let client = paycrest_sdk::PaycrestClient::new("YOUR_API_KEY");
-let stats = client.sender().get_stats().await?;
+let client = paycrest_sdk::PaycrestClient::new_with_options(paycrest_sdk::client::ClientOptions {
+    sender_api_key: Some("SENDER_KEY".to_string()),
+    ..Default::default()
+});
+let sender = client.sender()?;
+let stats = sender.get_stats().await?;
 ```
 
 ### Laravel
 
 ```php
-$stats = app(\Paycrest\SDK\Client\PaycrestClient::class)
-    ->sender()
-    ->getStats();
+$client = app(\Paycrest\SDK\Client\PaycrestClient::class);
+$order = $client->sender()->createOfframpOrder([
+    'amount' => '100',
+    'source' => ['type' => 'crypto', 'currency' => 'USDT', 'network' => 'base', 'refundAddress' => '0xabc'],
+    'destination' => [
+        'type' => 'fiat',
+        'currency' => 'NGN',
+        'recipient' => ['institution' => 'GTBINGLA', 'accountIdentifier' => '1234567890', 'accountName' => 'John', 'memo' => 'Payout']
+    ],
+]);
 ```
 
 ## Deployment guide to each SDK repository

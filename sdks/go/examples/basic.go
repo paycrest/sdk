@@ -9,10 +9,17 @@ import (
 )
 
 func main() {
-	apiKey := os.Getenv("PAYCREST_API_KEY")
-	client := sdk.NewClient(apiKey, sdk.DefaultBaseURL)
+	client := sdk.NewClientWithOptions(sdk.ClientOptions{
+		SenderAPIKey: os.Getenv("PAYCREST_SENDER_API_KEY"),
+		BaseURL:      sdk.DefaultBaseURL,
+	})
 
-	stats, err := client.Sender().GetStats(context.Background())
+	sender, err := client.Sender()
+	if err != nil {
+		panic(err)
+	}
+
+	stats, err := sender.GetStats(context.Background())
 	if err != nil {
 		panic(err)
 	}

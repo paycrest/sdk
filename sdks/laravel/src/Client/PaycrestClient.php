@@ -6,28 +6,39 @@ use RuntimeException;
 
 class PaycrestClient
 {
-    private readonly HttpClient $http;
+    private readonly ?HttpClient $senderHttp;
+    private readonly ?HttpClient $providerHttp;
 
     public function __construct(
-        string $apiKey,
+        ?string $apiKey = null,
+        ?string $senderApiKey = null,
+        ?string $providerApiKey = null,
         string $baseUrl = 'https://api.paycrest.io/v2',
         int $timeout = 20,
     ) {
-        if ($apiKey === '') {
-            throw new RuntimeException('PAYCREST_API_KEY is required');
-        }
+        $resolvedSenderKey = $senderApiKey ?: $apiKey;
+        $resolvedProviderKey = $providerApiKey ?: $apiKey;
 
-        $this->http = new HttpClient($apiKey, $baseUrl, $timeout);
+        $this->senderHttp = $resolvedSenderKey ? new HttpClient($resolvedSenderKey, $baseUrl, $timeout) : null;
+        $this->providerHttp = $resolvedProviderKey ? new HttpClient($resolvedProviderKey, $baseUrl, $timeout) : null;
     }
 
     public function sender(): SenderClient
     {
-        return new SenderClient($this->http);
+        if ($this->senderHttp === null) {
+            throw new RuntimeException('senderApiKey (or apiKey) is required');
+        }
+
+        return new SenderClient($this->senderHttp);
     }
 
-    public function provider(): never
+    public function provider(): ProviderClient
     {
-        throw new RuntimeException('Provider SDK support is not available yet in v2 monorepo');
+        if ($this->providerHttp === null) {
+            throw new RuntimeException('providerApiKey (or apiKey) is required');
+        }
+
+        return new ProviderClient($this->providerHttp);
     }
 
     public static function verifyWebhookSignature(string $rawBody, string $signature, string $secret): bool

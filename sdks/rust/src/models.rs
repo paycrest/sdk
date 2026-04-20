@@ -19,6 +19,16 @@ pub struct SenderStats {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProviderStats {
+    #[serde(rename = "totalOrders")]
+    pub total_orders: i64,
+    #[serde(rename = "totalFiatVolume")]
+    pub total_fiat_volume: String,
+    #[serde(rename = "totalCryptoVolume")]
+    pub total_crypto_volume: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PaymentOrder {
     pub id: String,
     pub status: String,
@@ -61,4 +71,37 @@ pub struct ListOrdersResponse {
     #[serde(rename = "pageSize")]
     pub page_size: i64,
     pub orders: Vec<PaymentOrder>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RateQuoteSide {
+    pub rate: String,
+    #[serde(rename = "providerIds")]
+    pub provider_ids: Vec<String>,
+    #[serde(rename = "orderType")]
+    pub order_type: String,
+    #[serde(rename = "refundTimeoutMinutes")]
+    pub refund_timeout_minutes: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RateQuoteResponse {
+    pub buy: Option<RateQuoteSide>,
+    pub sell: Option<RateQuoteSide>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MarketRateSide {
+    #[serde(rename = "marketRate")]
+    pub market_rate: String,
+    #[serde(rename = "minimumRate")]
+    pub minimum_rate: String,
+    #[serde(rename = "maximumRate")]
+    pub maximum_rate: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MarketRateResponse {
+    pub buy: Option<MarketRateSide>,
+    pub sell: Option<MarketRateSide>,
 }

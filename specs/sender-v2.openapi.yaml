@@ -253,6 +253,31 @@ components:
           type: string
         totalFeeEarnings:
           type: string
+    ProviderStatsResponse:
+      type: object
+      properties:
+        totalOrders:
+          type: integer
+        totalFiatVolume:
+          type: string
+        totalCryptoVolume:
+          type: string
+    MarketRateSide:
+      type: object
+      properties:
+        marketRate:
+          type: string
+        minimumRate:
+          type: string
+        maximumRate:
+          type: string
+    MarketRateResponse:
+      type: object
+      properties:
+        buy:
+          $ref: "#/components/schemas/MarketRateSide"
+        sell:
+          $ref: "#/components/schemas/MarketRateSide"
     VerifyAccountRequest:
       type: object
       required: [institution, accountIdentifier]
@@ -369,3 +394,178 @@ paths:
                     properties:
                       data:
                         type: string
+
+  /rates/{network}/{token}/{amount}/{fiat}:
+    get:
+      summary: Get public token rate quote
+      parameters:
+        - in: path
+          name: network
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: amount
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: fiat
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: side
+          schema:
+            type: string
+            enum: [buy, sell]
+        - in: query
+          name: provider_id
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Public rate quote
+  /provider/orders:
+    get:
+      summary: List provider orders
+      security: [{ ApiKeyAuth: [] }]
+      parameters:
+        - in: query
+          name: currency
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            default: 10
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: ordering
+          schema:
+            type: string
+            enum: [asc, desc]
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: export
+          schema:
+            type: string
+            enum: [csv]
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Provider list of orders
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/StandardResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/V2PaymentOrderListResponse'
+  /provider/orders/{id}:
+    get:
+      summary: Get provider order by ID
+      security: [{ ApiKeyAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Provider order
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/StandardResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/V2PaymentOrderGetResponse'
+  /provider/stats:
+    get:
+      summary: Get provider stats
+      security: [{ ApiKeyAuth: [] }]
+      parameters:
+        - in: query
+          name: currency
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Provider stats
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/StandardResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ProviderStatsResponse'
+  /provider/node-info:
+    get:
+      summary: Get provider node info
+      security: [{ ApiKeyAuth: [] }]
+      responses:
+        '200':
+          description: Provider node info
+  /provider/rates/{token}/{fiat}:
+    get:
+      summary: Get provider market rate bands
+      security: [{ ApiKeyAuth: [] }]
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: fiat
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Provider market rate bands
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/StandardResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MarketRateResponse'
