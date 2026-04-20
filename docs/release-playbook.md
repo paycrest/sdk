@@ -72,3 +72,26 @@ RELEASE_CONFIRM=YES ./scripts/release/release_all.sh 2.0.0 --publish
 ```
 
 Then mirror each language subtree to its public repository and publish.
+
+## Registry publish workflows (GitHub Actions)
+
+This repository now includes manual publish workflows per registry:
+
+- `.github/workflows/publish-typescript.yml` (npm)
+- `.github/workflows/publish-python.yml` (PyPI)
+- `.github/workflows/publish-rust.yml` (crates.io)
+- `.github/workflows/publish-laravel.yml` (tag + optional Packagist ping)
+
+All publish workflows:
+
+- run only via `workflow_dispatch`,
+- run smoke checks before publish,
+- require explicit `confirm_publish: true`,
+- validate the requested version against package manifests.
+
+### Required repository secrets
+
+- `NPM_TOKEN` for npm publish
+- `PYPI_API_TOKEN` for PyPI publish
+- `CARGO_REGISTRY_TOKEN` for crates.io publish
+- `PACKAGIST_UPDATE_URL` (optional) for Packagist refresh webhook

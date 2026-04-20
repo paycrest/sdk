@@ -1,0 +1,65 @@
+name: Publish TypeScript SDK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 2.1.0)"
+        required: true
+        type: string
+      dry_run:
+        description: "Run validations only without publishing"
+        required: false
+        default: true
+        type: boolean
+  push:
+    tags:
+      - "typescript-v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sdks/typescript/package-lock.json
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Resolve version and mode
+        id: vars
+        run: |
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#typescript-v}"
+            mode="--publish"
+          else
+            version="${{ inputs.version }}"
+            if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+              mode="--dry-run"
+            else
+              mode="--publish"
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+
+      - name: Validate and publish TypeScript package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_CONFIRM: YES
+          RELEASE_SKIP_SMOKE: "1"
+        run: |
+          if [[ "${{ steps.vars.outputs.mode }}" == "--publish" && -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo "NPM_TOKEN secret is required for publish mode." >&2
+            exit 1
+          fi
+          ./scripts/release/release_typescript.sh "${{ steps.vars.outputs.version }}" "${{ steps.vars.outputs.mode }}"

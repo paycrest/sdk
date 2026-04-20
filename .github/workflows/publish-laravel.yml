@@ -1,0 +1,99 @@
+name: Publish Laravel (Packagist Sync)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "SDK version to validate (e.g. 2.1.0)"
+        required: true
+        type: string
+      run_live_integration:
+        description: "Run live integration checks when credentials exist"
+        required: true
+        default: false
+        type: boolean
+      force_publish:
+        description: "Acknowledge publish intent after validation"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.0"
+
+      - name: Configure go1.26.0 shim for smoke scripts
+        run: |
+          echo '#!/usr/bin/env bash' > /tmp/go1.26.0
+          echo 'exec go "$@"' >> /tmp/go1.26.0
+          chmod +x /tmp/go1.26.0
+          sudo mv /tmp/go1.26.0 /usr/local/bin/go1.26.0
+          go1.26.0 version
+
+      - name: Set up Rust toolchain
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add rustfmt clippy --toolchain stable
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          tools: composer
+          extensions: mbstring, xml, curl, zip, bcmath, intl
+
+      - name: Run smoke checks
+        run: ./scripts/tests/run_all_smoke.sh
+
+      - name: Run release script dry-run
+        env:
+          RELEASE_SKIP_SMOKE: "1"
+        run: ./scripts/release/release_laravel.sh "${{ inputs.version }}" --dry-run
+
+      - name: Optionally run integration checks
+        if: ${{ inputs.run_live_integration }}
+        env:
+          PAYCREST_BASE_URL: ${{ secrets.PAYCREST_BASE_URL }}
+          PAYCREST_SENDER_API_KEY: ${{ secrets.PAYCREST_SENDER_API_KEY }}
+          PAYCREST_PROVIDER_API_KEY: ${{ secrets.PAYCREST_PROVIDER_API_KEY }}
+        run: ./scripts/tests/run_all_integration.sh
+
+  publish-intent:
+    runs-on: ubuntu-latest
+    needs: validate
+    if: ${{ inputs.force_publish }}
+    steps:
+      - name: Publish instructions for Laravel package
+        run: |
+          echo "Release validation complete for Laravel SDK v${{ inputs.version }}."
+          echo "Publishing requires the mirrored sdk-laravel repository:"
+          echo "  1) tag v${{ inputs.version }}"
+          echo "  2) push tag to remote"
+          echo "  3) ensure Packagist sync/webhook updates package metadata"

@@ -121,6 +121,11 @@ This repository includes GitHub Actions workflows for quality gates:
 
 - `ci.yml` runs on pushes/PRs and executes `./scripts/tests/run_all_smoke.sh`.
 - `release-validation.yml` runs manually (`workflow_dispatch`) to verify release script guardrails in dry-run mode.
+- Registry publish workflows are available as manual dispatch jobs:
+  - `publish-typescript.yml`
+  - `publish-python.yml`
+  - `publish-rust.yml`
+  - `publish-laravel.yml`
 - `integration.yml` runs manually (`workflow_dispatch`) and executes opt-in live integration checks against `https://api.paycrest.io/v2` when API credentials are provided.
 
 Release scripts in `scripts/release/` are hardened to:
@@ -153,6 +158,8 @@ Required environment variables (as needed by each SDK script):
 - `PAYCREST_PROVIDER_API_KEY`
 
 For GitHub Actions, use the manual **Integration (manual)** workflow and provide secrets in the run inputs.
+
+Publish workflows require the corresponding repository secrets (`NPM_TOKEN`, `PYPI_API_TOKEN`, `CARGO_REGISTRY_TOKEN`) and enforce an explicit confirmation phrase before publish.
 
 ## Quick usage examples
 

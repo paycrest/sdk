@@ -4,6 +4,7 @@ set -euo pipefail
 VERSION="${1:?Usage: release_typescript.sh <version> [--dry-run|--publish]}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MODE="${2:-}"
+SDK_DIR="$ROOT/sdks/typescript"
 
 # shellcheck source=common.sh
 source "$ROOT/scripts/release/common.sh"
@@ -15,8 +16,6 @@ require_cmd npm
 ensure_file "$ROOT/sdks/typescript/package.json"
 maybe_run_smoke_suite "$ROOT"
 
-cd "$SDK_DIR"
-SDK_DIR="$ROOT/sdks/typescript"
 cd "$SDK_DIR"
 current_version="$(node -p "require('./package.json').version")"
 assert_version_match "$VERSION" "$current_version" "sdks/typescript/package.json version"
