@@ -24,3 +24,6 @@ mod tests {
         assert!(!verify_webhook_signature(body, "bad", secret));
     }
 }
+
+#[cfg(test)]
+mod contract_tests;

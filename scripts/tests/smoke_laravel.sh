@@ -9,5 +9,17 @@ if ! command -v php >/dev/null 2>&1; then
     exit 0
 fi
 
+if ! command -v composer >/dev/null 2>&1; then
+    echo "composer not installed, skipping laravel smoke"
+    exit 0
+fi
+
+if [ ! -d "vendor" ]; then
+    composer install --no-interaction --prefer-dist
+fi
+
 php -l src/Client/PaycrestClient.php
 php -l src/Client/SenderClient.php
+php -l src/Client/ProviderClient.php
+
+composer run test:contract
