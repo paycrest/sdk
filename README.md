@@ -159,7 +159,7 @@ Required environment variables (as needed by each SDK script):
 
 For GitHub Actions, use the manual **Integration (manual)** workflow and provide secrets in the run inputs.
 
-Publish workflows require the corresponding repository secrets (`NPM_TOKEN`, `PYPI_API_TOKEN`, `CARGO_REGISTRY_TOKEN`) and enforce an explicit confirmation phrase before publish.
+Publish workflows require the corresponding repository secrets (`NPM_TOKEN`, `PYPI_API_TOKEN`, `CRATES_IO_TOKEN`) and enforce an explicit confirmation input before publish.
 
 ## Quick usage examples
 

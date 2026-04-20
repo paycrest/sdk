@@ -80,7 +80,7 @@ jobs:
       - name: Optionally run integration checks
         if: ${{ inputs.run_live_integration }}
         env:
-          PAYCREST_BASE_URL: ${{ secrets.PAYCREST_BASE_URL }}
+          PAYCREST_BASE_URL: ${{ vars.PAYCREST_BASE_URL != '' && vars.PAYCREST_BASE_URL || 'https://api.paycrest.io/v2' }}
           PAYCREST_SENDER_API_KEY: ${{ secrets.PAYCREST_SENDER_API_KEY }}
           PAYCREST_PROVIDER_API_KEY: ${{ secrets.PAYCREST_PROVIDER_API_KEY }}
         run: ./scripts/tests/run_all_integration.sh
