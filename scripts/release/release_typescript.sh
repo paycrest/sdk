@@ -1,11 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${1:?Usage: release_typescript.sh <version>}"
+VERSION="${1:?Usage: release_typescript.sh <version> [--dry-run|--publish]}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+MODE="${2:-}"
 
-cd "$ROOT/sdks/typescript"
-npm version "$VERSION" --no-git-tag-version
+# shellcheck source=common.sh
+source "$ROOT/scripts/release/common.sh"
+MODE="$(release_mode_from_arg "$MODE")"
+require_semver "$VERSION"
+ensure_clean_worktree "$ROOT"
+require_cmd git
+require_cmd node
+require_cmd npm
+ensure_file "$ROOT/sdks/typescript/package.json"
+maybe_run_smoke_suite "$ROOT"
+
+SDK_DIR="$ROOT/sdks/typescript"
+current_version="$(node -p "require('./package.json').version" --input-type=commonjs "$SDK_DIR")"
+assert_version_match "$VERSION" "$current_version" "sdks/typescript/package.json version"
+log_release_mode "@paycrest/sdk" "$VERSION" "$MODE"
+confirm_publish_if_needed "@paycrest/sdk" "$VERSION" "$MODE"
+
+cd "$SDK_DIR"
+npm ci --no-fund --no-audit
+npm run test
+
+npm pack >/dev/null
+if [[ "$MODE" == "dry-run" ]]; then
+    echo "TypeScript package pack validation completed for $VERSION."
+    exit 0
+fi
+
 npm publish --access public
 
 echo "TypeScript SDK published: $VERSION"
