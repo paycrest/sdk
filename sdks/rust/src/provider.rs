@@ -1,16 +1,16 @@
 use reqwest::Method;
 
-use crate::client::{ClientHttp, RequestExecutor};
+use crate::client::HttpContext;
 use crate::error::PaycrestError;
 use crate::models::{ListOrdersResponse, MarketRateResponse, PaymentOrder, ProviderStats};
 
 #[derive(Clone)]
 pub struct ProviderClient {
-    http: ClientHttp,
+    http: HttpContext,
 }
 
 impl ProviderClient {
-    pub(crate) fn new(http: ClientHttp) -> Self {
+    pub(crate) fn new(http: HttpContext) -> Self {
         Self { http }
     }
 
@@ -45,27 +45,23 @@ impl ProviderClient {
 
         let response = self
             .http
-            .request(
-                Method::GET,
-                "/provider/orders".to_string(),
-                Some(query),
-                None,
-            )
+            .request(Method::GET, "/provider/orders", Some(&query), None)
             .await?;
         Ok(response.data)
     }
 
     pub async fn get_order(&self, order_id: &str) -> Result<PaymentOrder, PaycrestError> {
         let path = format!("/provider/orders/{order_id}");
-        let response = self.http.request(Method::GET, path, None, None).await?;
+        let response = self.http.request(Method::GET, &path, None, None).await?;
         Ok(response.data)
     }
 
     pub async fn get_stats(&self, currency: Option<&str>) -> Result<ProviderStats, PaycrestError> {
         let query = currency.map(|c| vec![("currency", c.to_string())]);
+        let query_ref = query.as_deref();
         let response = self
             .http
-            .request(Method::GET, "/provider/stats".to_string(), query, None)
+            .request(Method::GET, "/provider/stats", query_ref, None)
             .await?;
         Ok(response.data)
     }
@@ -73,7 +69,7 @@ impl ProviderClient {
     pub async fn get_node_info(&self) -> Result<serde_json::Value, PaycrestError> {
         let response = self
             .http
-            .request(Method::GET, "/provider/node-info".to_string(), None, None)
+            .request(Method::GET, "/provider/node-info", None, None)
             .await?;
         Ok(response.data)
     }
@@ -84,7 +80,7 @@ impl ProviderClient {
         fiat: &str,
     ) -> Result<MarketRateResponse, PaycrestError> {
         let path = format!("/provider/rates/{token}/{fiat}");
-        let response = self.http.request(Method::GET, path, None, None).await?;
+        let response = self.http.request(Method::GET, &path, None, None).await?;
         Ok(response.data)
     }
 }

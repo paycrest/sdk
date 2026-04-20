@@ -8,7 +8,7 @@ use crate::models::ApiResponse;
 pub const DEFAULT_BASE_URL: &str = "https://api.paycrest.io/v2";
 
 #[derive(Clone)]
-struct HttpContext {
+pub(crate) struct HttpContext {
     api_key: String,
     base_url: String,
     http: reqwest::Client,
@@ -23,7 +23,7 @@ impl HttpContext {
         }
     }
 
-    async fn request<T: DeserializeOwned>(
+    pub(crate) async fn request<T: DeserializeOwned>(
         &self,
         method: Method,
         path: &str,
@@ -129,27 +129,3 @@ impl Default for ClientOptions {
         }
     }
 }
-
-pub(crate) trait RequestExecutor {
-    fn request<T: DeserializeOwned + Send + 'static>(
-        &self,
-        method: Method,
-        path: String,
-        query: Option<Vec<(&'static str, String)>>,
-        body: Option<Value>,
-    ) -> impl std::future::Future<Output = Result<ApiResponse<T>, PaycrestError>> + Send;
-}
-
-impl RequestExecutor for HttpContext {
-    async fn request<T: DeserializeOwned + Send + 'static>(
-        &self,
-        method: Method,
-        path: String,
-        query: Option<Vec<(&'static str, String)>>,
-        body: Option<Value>,
-    ) -> Result<ApiResponse<T>, PaycrestError> {
-        self.request(method, &path, query.as_deref(), body).await
-    }
-}
-
-pub(crate) use HttpContext as ClientHttp;

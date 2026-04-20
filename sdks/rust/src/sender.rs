@@ -1,17 +1,17 @@
 use reqwest::Method;
 use serde_json::{json, Value};
 
-use crate::client::{ClientHttp, RequestExecutor};
+use crate::client::HttpContext;
 use crate::error::PaycrestError;
 use crate::models::{ListOrdersResponse, PaymentOrder, RateQuoteResponse, SenderStats};
 
 #[derive(Clone)]
 pub struct SenderClient {
-    http: ClientHttp,
+    http: HttpContext,
 }
 
 impl SenderClient {
-    pub(crate) fn new(http: ClientHttp) -> Self {
+    pub(crate) fn new(http: HttpContext) -> Self {
         Self { http }
     }
 
@@ -45,53 +45,33 @@ impl SenderClient {
         &self,
         payload: Value,
     ) -> Result<PaymentOrder, PaycrestError> {
+        let network = self.read(&payload, &["source", "network"]);
+        let token = self.read(&payload, &["source", "currency"]);
+        let amount = self.read(&payload, &["amount"]);
+        let fiat = self.read(&payload, &["destination", "currency"]);
         let prepared = self
-            .with_resolved_rate(
-                payload,
-                rate_input(
-                    self.read(&payload, &["source", "network"]),
-                    self.read(&payload, &["source", "currency"]),
-                    self.read(&payload, &["amount"]),
-                    self.read(&payload, &["destination", "currency"]),
-                    "sell",
-                ),
-            )
+            .with_resolved_rate(payload, rate_input(network, token, amount, fiat, "sell"))
             .await?;
 
         let response = self
             .http
-            .request(
-                Method::POST,
-                "/sender/orders".to_string(),
-                None,
-                Some(prepared),
-            )
+            .request(Method::POST, "/sender/orders", None, Some(prepared))
             .await?;
         Ok(response.data)
     }
 
     pub async fn create_onramp_order(&self, payload: Value) -> Result<PaymentOrder, PaycrestError> {
+        let network = self.read(&payload, &["destination", "recipient", "network"]);
+        let token = self.read(&payload, &["destination", "currency"]);
+        let amount = self.read(&payload, &["amount"]);
+        let fiat = self.read(&payload, &["source", "currency"]);
         let prepared = self
-            .with_resolved_rate(
-                payload,
-                rate_input(
-                    self.read(&payload, &["destination", "recipient", "network"]),
-                    self.read(&payload, &["destination", "currency"]),
-                    self.read(&payload, &["amount"]),
-                    self.read(&payload, &["source", "currency"]),
-                    "buy",
-                ),
-            )
+            .with_resolved_rate(payload, rate_input(network, token, amount, fiat, "buy"))
             .await?;
 
         let response = self
             .http
-            .request(
-                Method::POST,
-                "/sender/orders".to_string(),
-                None,
-                Some(prepared),
-            )
+            .request(Method::POST, "/sender/orders", None, Some(prepared))
             .await?;
         Ok(response.data)
     }
@@ -112,21 +92,21 @@ impl SenderClient {
 
         let response = self
             .http
-            .request(Method::GET, "/sender/orders".to_string(), Some(query), None)
+            .request(Method::GET, "/sender/orders", Some(&query), None)
             .await?;
         Ok(response.data)
     }
 
     pub async fn get_order(&self, order_id: &str) -> Result<PaymentOrder, PaycrestError> {
         let path = format!("/sender/orders/{order_id}");
-        let response = self.http.request(Method::GET, path, None, None).await?;
+        let response = self.http.request(Method::GET, &path, None, None).await?;
         Ok(response.data)
     }
 
     pub async fn get_stats(&self) -> Result<SenderStats, PaycrestError> {
         let response = self
             .http
-            .request(Method::GET, "/sender/stats".to_string(), None, None)
+            .request(Method::GET, "/sender/stats", None, None)
             .await?;
         Ok(response.data)
     }
@@ -142,12 +122,7 @@ impl SenderClient {
         });
         let response = self
             .http
-            .request(
-                Method::POST,
-                "/verify-account".to_string(),
-                None,
-                Some(payload),
-            )
+            .request(Method::POST, "/verify-account", None, Some(payload))
             .await?;
         Ok(response.data)
     }
@@ -174,8 +149,8 @@ impl SenderClient {
             .http
             .request(
                 Method::GET,
-                path,
-                if query.is_empty() { None } else { Some(query) },
+                &path,
+                if query.is_empty() { None } else { Some(&query) },
                 None,
             )
             .await?;

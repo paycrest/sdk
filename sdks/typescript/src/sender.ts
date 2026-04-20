@@ -15,11 +15,19 @@ import {
 export class SenderClient {
   constructor(private readonly http: HttpClient) {}
 
+  private isOfframpOrder(payload: CreateOrderRequest): payload is CreateOfframpOrderRequest {
+    return payload.source.type === "crypto" && payload.destination.type === "fiat";
+  }
+
+  private isOnrampOrder(payload: CreateOrderRequest): payload is CreateOnrampOrderRequest {
+    return payload.source.type === "fiat" && payload.destination.type === "crypto";
+  }
+
   public async createOrder(payload: CreateOrderRequest): Promise<PaymentOrder> {
-    if (payload.source.type === "crypto" && payload.destination.type === "fiat") {
+    if (this.isOfframpOrder(payload)) {
       return this.createOfframpOrder(payload);
     }
-    if (payload.source.type === "fiat" && payload.destination.type === "crypto") {
+    if (this.isOnrampOrder(payload)) {
       return this.createOnrampOrder(payload);
     }
 

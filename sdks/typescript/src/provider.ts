@@ -14,7 +14,7 @@ export class ProviderClient {
     const response = await this.http.request<ListOrdersResponse>({
       method: "GET",
       path: "/provider/orders",
-      query: query as Record<string, string | number | boolean | undefined>,
+      query: query as unknown as Record<string, string | number | boolean | undefined>,
     });
     return response.data;
   }
