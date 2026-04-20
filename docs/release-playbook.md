@@ -1,12 +1,12 @@
-# Release Playbook (v2 Sender SDK)
+# Release Playbook (Paycrest SDK)
 
-This monorepo is the source-of-truth for all Paycrest Sender SDK v2 language clients.
+This monorepo is the source-of-truth for all Paycrest SDK language clients.
 
 ## Versioning policy
 
-- Monorepo release train tracks API line: `v2.x.y`
+- Monorepo release train uses semantic versioning.
 - SDK language packages can patch independently for ecosystem fixes.
-- Any wire-level behavior changes must be reflected in `specs/sender-v2.openapi.yaml` first.
+- Any wire-level behavior changes must be reflected in `specs/openapi.yaml` first.
 
 ## Preconditions
 
@@ -43,7 +43,7 @@ Target repo: `paycrest/sdk-go`
 1. Ensure module path remains `github.com/paycrest/sdk-go`.
 2. Run `./scripts/release/release_go.sh <version> --dry-run` to validate smoke/tests.
 3. Publish mode (`RELEASE_CONFIRM=YES ./scripts/release/release_go.sh <version> --publish`) validates again and prints operator steps since Go module release happens by tagging the target repository.
-4. Tag with semver in Go repository (e.g. `v2.1.0`).
+4. Tag with semver in Go repository (e.g. `v1.2.0`).
 5. Mirror subtree `sdks/go` and create release tag.
 
 ## Rust repository deployment

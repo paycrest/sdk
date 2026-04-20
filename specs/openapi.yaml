@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
   title: Paycrest Sender SDK Contract
-  version: 2.0.0
+  version: 1.0.0
   description: |
-    Canonical contract for Paycrest Sender SDK v2 across all supported languages.
+    Canonical contract for Paycrest Sender SDK across all supported languages.
     This file intentionally captures the sender-focused SDK surface.
 servers:
   - url: https://api.paycrest.io/v2
@@ -44,7 +44,7 @@ components:
                     type: string
             - type: object
               additionalProperties: true
-    V2FiatRecipient:
+    FiatRecipient:
       type: object
       required: [institution, accountIdentifier, accountName, memo]
       properties:
@@ -56,7 +56,7 @@ components:
           type: string
         memo:
           type: string
-    V2FiatRefundAccount:
+    FiatRefundAccount:
       type: object
       required: [institution, accountIdentifier, accountName]
       properties:
@@ -66,7 +66,7 @@ components:
           type: string
         accountName:
           type: string
-    V2CryptoRecipient:
+    CryptoRecipient:
       type: object
       required: [address, network]
       properties:
@@ -74,7 +74,7 @@ components:
           type: string
         network:
           type: string
-    V2CryptoSource:
+    CryptoSource:
       type: object
       required: [type, currency, network, refundAddress]
       properties:
@@ -87,7 +87,7 @@ components:
           type: string
         refundAddress:
           type: string
-    V2FiatSource:
+    FiatSource:
       type: object
       required: [type, currency, refundAccount]
       properties:
@@ -99,8 +99,8 @@ components:
         country:
           type: string
         refundAccount:
-          $ref: '#/components/schemas/V2FiatRefundAccount'
-    V2FiatDestination:
+          $ref: '#/components/schemas/FiatRefundAccount'
+    FiatDestination:
       type: object
       required: [type, currency, recipient]
       properties:
@@ -114,8 +114,8 @@ components:
         providerId:
           type: string
         recipient:
-          $ref: '#/components/schemas/V2FiatRecipient'
-    V2CryptoDestination:
+          $ref: '#/components/schemas/FiatRecipient'
+    CryptoDestination:
       type: object
       required: [type, currency, recipient]
       properties:
@@ -127,8 +127,8 @@ components:
         providerId:
           type: string
         recipient:
-          $ref: '#/components/schemas/V2CryptoRecipient'
-    V2CryptoProviderAccount:
+          $ref: '#/components/schemas/CryptoRecipient'
+    CryptoProviderAccount:
       type: object
       properties:
         network:
@@ -138,7 +138,7 @@ components:
         validUntil:
           type: string
           format: date-time
-    V2FiatProviderAccount:
+    FiatProviderAccount:
       type: object
       properties:
         institution:
@@ -154,7 +154,7 @@ components:
         validUntil:
           type: string
           format: date-time
-    V2PaymentOrderPayload:
+    PaymentOrderPayload:
       type: object
       required: [amount, source, destination]
       properties:
@@ -173,13 +173,13 @@ components:
           type: string
         source:
           oneOf:
-            - $ref: '#/components/schemas/V2CryptoSource'
-            - $ref: '#/components/schemas/V2FiatSource'
+            - $ref: '#/components/schemas/CryptoSource'
+            - $ref: '#/components/schemas/FiatSource'
         destination:
           oneOf:
-            - $ref: '#/components/schemas/V2FiatDestination'
-            - $ref: '#/components/schemas/V2CryptoDestination'
-    V2PaymentOrderGetResponse:
+            - $ref: '#/components/schemas/FiatDestination'
+            - $ref: '#/components/schemas/CryptoDestination'
+    PaymentOrderGetResponse:
       type: object
       properties:
         id:
@@ -221,17 +221,17 @@ components:
           type: string
         providerAccount:
           oneOf:
-            - $ref: '#/components/schemas/V2CryptoProviderAccount'
-            - $ref: '#/components/schemas/V2FiatProviderAccount'
+            - $ref: '#/components/schemas/CryptoProviderAccount'
+            - $ref: '#/components/schemas/FiatProviderAccount'
         source:
           oneOf:
-            - $ref: '#/components/schemas/V2CryptoSource'
-            - $ref: '#/components/schemas/V2FiatSource'
+            - $ref: '#/components/schemas/CryptoSource'
+            - $ref: '#/components/schemas/FiatSource'
         destination:
           oneOf:
-            - $ref: '#/components/schemas/V2FiatDestination'
-            - $ref: '#/components/schemas/V2CryptoDestination'
-    V2PaymentOrderListResponse:
+            - $ref: '#/components/schemas/FiatDestination'
+            - $ref: '#/components/schemas/CryptoDestination'
+    PaymentOrderListResponse:
       type: object
       properties:
         total:
@@ -243,7 +243,7 @@ components:
         orders:
           type: array
           items:
-            $ref: '#/components/schemas/V2PaymentOrderGetResponse'
+            $ref: '#/components/schemas/PaymentOrderGetResponse'
     SenderStatsResponse:
       type: object
       properties:
@@ -296,7 +296,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/V2PaymentOrderPayload'
+              $ref: '#/components/schemas/PaymentOrderPayload'
       responses:
         '201':
           description: Created
@@ -308,7 +308,7 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: '#/components/schemas/V2PaymentOrderGetResponse'
+                        $ref: '#/components/schemas/PaymentOrderGetResponse'
     get:
       summary: List payment orders
       security: [{ ApiKeyAuth: [] }]
@@ -333,7 +333,7 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: '#/components/schemas/V2PaymentOrderListResponse'
+                        $ref: '#/components/schemas/PaymentOrderListResponse'
   /sender/orders/{id}:
     get:
       summary: Get payment order
@@ -356,7 +356,7 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: '#/components/schemas/V2PaymentOrderGetResponse'
+                        $ref: '#/components/schemas/PaymentOrderGetResponse'
   /sender/stats:
     get:
       summary: Get sender stats
@@ -490,7 +490,7 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: '#/components/schemas/V2PaymentOrderListResponse'
+                        $ref: '#/components/schemas/PaymentOrderListResponse'
   /provider/orders/{id}:
     get:
       summary: Get provider order by ID
@@ -513,7 +513,7 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: '#/components/schemas/V2PaymentOrderGetResponse'
+                        $ref: '#/components/schemas/PaymentOrderGetResponse'
   /provider/stats:
     get:
       summary: Get provider stats
