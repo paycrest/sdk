@@ -126,6 +126,7 @@ This repository includes GitHub Actions workflows for quality gates:
   - `publish-python.yml`
   - `publish-rust.yml`
   - `publish-laravel.yml`
+- `integration.yml` runs manually (`workflow_dispatch`) and executes opt-in live integration checks against `https://api.paycrest.io/v2` when API credentials are provided.
 
 Release scripts in `scripts/release/` are hardened to:
 
@@ -134,6 +135,29 @@ Release scripts in `scripts/release/` are hardened to:
 - verify per-language package version alignment,
 - run smoke checks before release actions,
 - default to safe dry-run behavior unless explicitly asked to publish.
+
+## Live integration checks (opt-in)
+
+The repository includes cross-language live integration harness scripts under `scripts/tests/integration_*.sh`.
+
+They execute real SDK calls (currently sender/provider stats checks) and are **safe by default**:
+
+- if required API keys are missing, each script exits successfully with a skip message;
+- if credentials are present, scripts call Paycrest v2 and validate response shape.
+
+Run all integration scripts locally:
+
+```bash
+./scripts/tests/run_all_integration.sh
+```
+
+Required environment variables (as needed by each SDK script):
+
+- `PAYCREST_BASE_URL` (optional; defaults to `https://api.paycrest.io/v2`)
+- `PAYCREST_SENDER_API_KEY`
+- `PAYCREST_PROVIDER_API_KEY`
+
+For GitHub Actions, use the manual **Integration (manual)** workflow and provide secrets in the run inputs.
 
 Publish workflows require the corresponding repository secrets (`NPM_TOKEN`, `PYPI_API_TOKEN`, `CARGO_REGISTRY_TOKEN`) and enforce an explicit confirmation phrase before publish.
 

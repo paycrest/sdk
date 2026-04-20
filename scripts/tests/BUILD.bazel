@@ -2,9 +2,15 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "run_all_smoke.sh",
+    "run_all_integration.sh",
     "smoke_typescript.sh",
     "smoke_python.sh",
     "smoke_go.sh",
     "smoke_rust.sh",
     "smoke_laravel.sh",
+    "integration_typescript.sh",
+    "integration_python.sh",
+    "integration_go.sh",
+    "integration_rust.sh",
+    "integration_laravel.sh",
 ])
