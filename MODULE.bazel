@@ -1,0 +1,4 @@
+module(
+    name = "paycrest_sdk_monorepo",
+    version = "0.2.0",
+)

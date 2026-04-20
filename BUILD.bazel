@@ -1,0 +1,10 @@
+package(default_visibility = ["//visibility:public"])
+
+sh_test(
+    name = "smoke",
+    srcs = ["scripts/tests/run_all_smoke.sh"],
+    data = glob([
+        "scripts/tests/**",
+        "sdks/**",
+    ]),
+)

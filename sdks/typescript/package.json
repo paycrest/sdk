@@ -1,0 +1,31 @@
+{
+  "name": "@paycrest/sdk",
+  "version": "2.0.0",
+  "description": "Official Paycrest SDK (v2) for Sender integrations",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node tests/smoke.mjs"
+  },
+  "keywords": [
+    "paycrest",
+    "sdk",
+    "payments",
+    "stablecoin",
+    "sender"
+  ],
+  "author": "Paycrest",
+  "license": "AGPL-3.0-or-later",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "latest"
+  }
+}
