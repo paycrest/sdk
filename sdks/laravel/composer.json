@@ -13,6 +13,11 @@
       "Paycrest\\SDK\\Tests\\": "tests/"
     }
   },
+  "config": {
+    "allow-plugins": {
+      "pestphp/pest-plugin": true
+    }
+  },
   "extra": {
     "laravel": {
       "providers": [
@@ -31,7 +36,7 @@
     "orchestra/testbench": "^10.11",
     "pestphp/pest": "^3.8",
     "pestphp/pest-plugin-laravel": "^3.2",
-    "phpunit/phpunit": "^11.5.55"
+    "phpunit/phpunit": "11.5.50"
   },
   "scripts": {
     "test": "vendor/bin/pest --colors=always",

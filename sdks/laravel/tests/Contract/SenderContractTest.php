@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 use Paycrest\SDK\Client\SenderClient;
 use Paycrest\SDK\Tests\Support\MockHttpClient;
-use RuntimeException;
 
 it('fetches sell quote before creating an offramp order', function (): void {
     $http = new MockHttpClient([
@@ -224,5 +223,5 @@ it('throws when expected side quote is missing from response', function (): void
                 ],
             ],
         ]);
-    })->toThrow(RuntimeException::class, 'Unable to fetch sell rate for requested order.');
+    })->toThrow(\RuntimeException::class, 'Unable to fetch sell rate for requested order.');
 });

@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use Paycrest\SDK\Client\PaycrestClient;
-use RuntimeException;
 
 it('requires sender credentials when requesting sender client', function (): void {
     $client = new PaycrestClient(
@@ -14,7 +13,7 @@ it('requires sender credentials when requesting sender client', function (): voi
     );
 
     expect(fn () => $client->sender())
-        ->toThrow(RuntimeException::class, 'senderApiKey (or apiKey) is required');
+        ->toThrow(\RuntimeException::class, 'senderApiKey (or apiKey) is required');
 });
 
 it('requires provider credentials when requesting provider client', function (): void {
@@ -26,5 +25,5 @@ it('requires provider credentials when requesting provider client', function ():
     );
 
     expect(fn () => $client->provider())
-        ->toThrow(RuntimeException::class, 'providerApiKey (or apiKey) is required');
+        ->toThrow(\RuntimeException::class, 'providerApiKey (or apiKey) is required');
 });
