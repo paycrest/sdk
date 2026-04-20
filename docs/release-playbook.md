@@ -15,6 +15,8 @@ This monorepo is the source-of-truth for all Paycrest Sender SDK v2 language cli
 3. Release notes include API compatibility and migration notes.
 4. Run release scripts from a clean `main` working tree.
 5. Use dry-run mode first (`--dry-run`, default) and only publish with `--publish`.
+6. Optional but recommended: run live integration validation with sandbox keys:
+   `./scripts/tests/run_all_integration.sh`
 
 ## TypeScript repository deployment
 
