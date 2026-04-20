@@ -1,0 +1,59 @@
+name: Publish Rust SDK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "SDK semver to publish (e.g. 2.0.1)"
+        required: true
+        type: string
+      dry_run:
+        description: "Run packaging only (no publish)"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  publish-rust:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      RUST_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate crates token availability
+        if: ${{ !inputs.dry_run }}
+        run: |
+          if [[ -z "${RUST_REGISTRY_TOKEN:-}" ]]; then
+            echo "CRATES_IO_TOKEN secret is required for rust publish."
+            exit 1
+          fi
+
+      - name: Set up Rust toolchain
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add rustfmt clippy --toolchain stable
+
+      - name: Run smoke checks
+        run: ./scripts/tests/run_all_smoke.sh
+
+      - name: Release dry-run
+        if: ${{ inputs.dry_run }}
+        env:
+          RELEASE_SKIP_SMOKE: "1"
+        run: ./scripts/release/release_rust.sh "${{ inputs.version }}" --dry-run
+
+      - name: Publish to crates.io
+        if: ${{ !inputs.dry_run }}
+        env:
+          RELEASE_CONFIRM: "YES"
+          RELEASE_SKIP_SMOKE: "1"
+        run: ./scripts/release/release_rust.sh "${{ inputs.version }}" --publish

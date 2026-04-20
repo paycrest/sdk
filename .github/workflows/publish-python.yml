@@ -1,0 +1,44 @@
+name: Publish Python SDK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 2.1.0)"
+        required: true
+        type: string
+      publish:
+        description: "Set true to publish to PyPI, false for validation only"
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  publish-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RELEASE_CONFIRM: ${{ github.event.inputs.publish == 'true' && 'YES' || 'NO' }}
+      RELEASE_SKIP_SMOKE: "1"
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate release artifacts (dry-run)
+        if: ${{ github.event.inputs.publish != 'true' }}
+        run: ./scripts/release/release_python.sh "${{ inputs.version }}" --dry-run
+
+      - name: Publish package to PyPI
+        if: ${{ github.event.inputs.publish == 'true' }}
+        env:
+          TWINE_USERNAME: "__token__"
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: ./scripts/release/release_python.sh "${{ inputs.version }}" --publish
