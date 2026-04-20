@@ -30,10 +30,11 @@ jobs:
         with:
           go-version: "1.26.0"
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Set up Rust toolchain
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+          rustup component add rustfmt clippy --toolchain stable
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
