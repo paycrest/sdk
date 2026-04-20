@@ -1,6 +1,6 @@
-# Paycrest SDK Monorepo (Bazel, Sender API v2)
+# Paycrest SDK Monorepo (Bazel)
 
-Multi-language SDK monorepo for the Paycrest **Sender API v2** (`https://api.paycrest.io/v2`), designed to publish first-class clients for:
+Multi-language SDK monorepo for the Paycrest API (`https://api.paycrest.io/v2`), designed to publish first-class clients for:
 
 - TypeScript (`@paycrest/sdk`)
 - Python (`paycrest-sdk`)
@@ -8,11 +8,11 @@ Multi-language SDK monorepo for the Paycrest **Sender API v2** (`https://api.pay
 - Rust (`paycrest-sdk`)
 - Laravel / PHP (`paycrest/sdk-laravel`)
 
-v2 scope today is **Sender**. The repository structure intentionally supports future expansion for provider and other protocol parties.
+Current scope includes **Sender** and **Provider**. The repository structure intentionally supports future expansion for other protocol parties.
 
 ## Design goals
 
-- One canonical sender v2 contract: `specs/sender-v2.openapi.yaml`
+- One canonical OpenAPI contract: `specs/openapi.yaml`
 - Consistent method surface across all languages
 - Bazel-first orchestration for smoke checks
 - Independent, ecosystem-native release flows
@@ -24,7 +24,7 @@ v2 scope today is **Sender**. The repository structure intentionally supports fu
 ├── BUILD.bazel
 ├── MODULE.bazel
 ├── specs/
-│   └── sender-v2.openapi.yaml
+│   └── openapi.yaml
 ├── docs/
 │   └── release-playbook.md
 ├── scripts/
@@ -38,7 +38,7 @@ v2 scope today is **Sender**. The repository structure intentionally supports fu
     └── laravel/
 ```
 
-## Shared SDK surface (Sender v2)
+## Shared SDK surface
 
 Every language SDK exposes the same sender primitives:
 
@@ -143,7 +143,7 @@ The repository includes cross-language live integration harness scripts under `s
 They execute real SDK calls (currently sender/provider stats checks) and are **safe by default**:
 
 - if required API keys are missing, each script exits successfully with a skip message;
-- if credentials are present, scripts call Paycrest v2 and validate response shape.
+- if credentials are present, scripts call the Paycrest API and validate response shape.
 
 Run all integration scripts locally:
 
@@ -159,7 +159,7 @@ Required environment variables (as needed by each SDK script):
 
 For GitHub Actions, use the manual **Integration (manual)** workflow and provide secrets in the run inputs.
 
-Publish workflows require the corresponding repository secrets (`NPM_TOKEN`, `PYPI_API_TOKEN`, `CRATES_IO_TOKEN`) and enforce an explicit confirmation input before publish.
+Publish workflows require the corresponding repository secrets (`NPM_TOKEN`, `PYPI_API_TOKEN`, `CARGO_REGISTRY_TOKEN`) and enforce an explicit confirmation input before publish.
 
 ## Quick usage examples
 
@@ -273,7 +273,7 @@ git subtree split --prefix=sdks/go -b release/go
 # push release/go branch to paycrest/sdk-go
 ```
 
-In `sdk-go`, create and push tag `v2.0.0`.
+In `sdk-go`, create and push tag `v<version>`.
 
 ### 4) Rust repository deployment (`paycrest/sdk-rust`)
 
@@ -293,7 +293,7 @@ git subtree split --prefix=sdks/laravel -b release/laravel
 # push release/laravel branch to paycrest/sdk-laravel
 ```
 
-Then tag `v2.0.0` and ensure Packagist syncs that tag.
+Then tag `v<version>` and ensure Packagist syncs that tag.
 
 ## Coordinated multi-language release
 
