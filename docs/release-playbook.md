@@ -13,52 +13,60 @@ This monorepo is the source-of-truth for all Paycrest Sender SDK v2 language cli
 1. `bazel test //...` passes.
 2. Changelog updates are merged.
 3. Release notes include API compatibility and migration notes.
+4. Run release scripts from a clean `main` working tree.
+5. Use dry-run mode first (`--dry-run`, default) and only publish with `--publish`.
 
 ## TypeScript repository deployment
 
 Target repo: `paycrest/sdk-typescript` (or your chosen public package repo)
 
-1. Run `./scripts/release/release_typescript.sh <version>`
-2. Push git tag `typescript-v<version>` in this monorepo.
-3. Mirror `sdks/typescript` subtree to `paycrest/sdk-typescript`.
+1. Run `./scripts/release/release_typescript.sh <version> --dry-run`
+2. Publish with `RELEASE_CONFIRM=YES ./scripts/release/release_typescript.sh <version> --publish` when ready.
+3. Push git tag `typescript-v<version>` in this monorepo.
+4. Mirror `sdks/typescript` subtree to `paycrest/sdk-typescript`.
 
 ## Python repository deployment
 
 Target repo: `paycrest/sdk-python`
 
-1. Run `./scripts/release/release_python.sh <version>`
-2. Push git tag `python-v<version>`.
-3. Mirror subtree `sdks/python` to dedicated repository.
+1. Run `./scripts/release/release_python.sh <version> --dry-run`
+2. Publish with `RELEASE_CONFIRM=YES ./scripts/release/release_python.sh <version> --publish` when ready.
+3. Push git tag `python-v<version>`.
+4. Mirror subtree `sdks/python` to dedicated repository.
 
 ## Go repository deployment
 
 Target repo: `paycrest/sdk-go`
 
 1. Ensure module path remains `github.com/paycrest/sdk-go`.
-2. Tag with semver in Go repository (e.g. `v2.1.0`).
-3. Mirror subtree `sdks/go` and create release tag.
+2. Run `./scripts/release/release_go.sh <version> --dry-run` to validate smoke/tests.
+3. Publish mode (`RELEASE_CONFIRM=YES ./scripts/release/release_go.sh <version> --publish`) validates again and prints operator steps since Go module release happens by tagging the target repository.
+4. Tag with semver in Go repository (e.g. `v2.1.0`).
+5. Mirror subtree `sdks/go` and create release tag.
 
 ## Rust repository deployment
 
 Target repo: `paycrest/sdk-rust`
 
-1. Run `./scripts/release/release_rust.sh <version>`
-2. Push tag `rust-v<version>`.
-3. Mirror `sdks/rust` subtree to dedicated repository.
+1. Run `./scripts/release/release_rust.sh <version> --dry-run`
+2. Publish with `RELEASE_CONFIRM=YES ./scripts/release/release_rust.sh <version> --publish` when ready.
+3. Push tag `rust-v<version>`.
+4. Mirror `sdks/rust` subtree to dedicated repository.
 
 ## Laravel repository deployment
 
 Target repo: `paycrest/sdk-laravel`
 
-1. Update `composer.json` version via tag.
-2. Run `./scripts/release/release_laravel.sh <version>`.
+1. Run `./scripts/release/release_laravel.sh <version> --dry-run`
+2. Publish mode (`RELEASE_CONFIRM=YES ./scripts/release/release_laravel.sh <version> --publish`) validates contracts and prints the operator steps for tag + Packagist sync.
 3. Mirror `sdks/laravel` subtree and create tag `v<version>`.
 4. Trigger Packagist update webhook (if not auto-synced).
 
 ## Cut a coordinated multi-language release
 
 ```bash
-./scripts/release/release_all.sh 2.0.0
+./scripts/release/release_all.sh 2.0.0 --dry-run
+RELEASE_CONFIRM=YES ./scripts/release/release_all.sh 2.0.0 --publish
 ```
 
 Then mirror each language subtree to its public repository and publish.

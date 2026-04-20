@@ -1,0 +1,60 @@
+name: Release Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver to validate (e.g. 2.1.0)"
+        required: true
+        type: string
+
+jobs:
+  release-dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.0"
+
+      - name: Set up Rust toolchain
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+          rustup component add rustfmt clippy --toolchain stable
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          tools: composer
+          extensions: mbstring, xml, curl, zip, bcmath, intl
+
+      - name: Configure go1.26.0 shim for smoke scripts
+        run: |
+          echo '#!/usr/bin/env bash' > /tmp/go1.26.0
+          echo 'exec go "$@"' >> /tmp/go1.26.0
+          chmod +x /tmp/go1.26.0
+          sudo mv /tmp/go1.26.0 /usr/local/bin/go1.26.0
+          go1.26.0 version
+
+      - name: Run monorepo smoke tests
+        run: ./scripts/tests/run_all_smoke.sh
+
+      - name: Validate release scripts in dry-run
+        env:
+          RELEASE_SKIP_SMOKE: "1"
+        run: ./scripts/release/release_all.sh "${{ inputs.version }}" --dry-run

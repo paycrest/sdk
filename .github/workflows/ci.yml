@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  typescript:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sdks/typescript/package-lock.json
+
+      - name: Run TypeScript smoke
+        run: ./scripts/tests/smoke_typescript.sh
+
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Python smoke
+        run: ./scripts/tests/smoke_python.sh
+
+  go:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.0"
+          cache-dependency-path: sdks/go/go.sum
+
+      - name: Configure go1.26.0 shim for smoke scripts
+        run: |
+          echo '#!/usr/bin/env bash' > /tmp/go1.26.0
+          echo 'exec go "$@"' >> /tmp/go1.26.0
+          chmod +x /tmp/go1.26.0
+          sudo mv /tmp/go1.26.0 /usr/local/bin/go1.26.0
+          go1.26.0 version
+
+      - name: Run Go smoke
+        run: ./scripts/tests/smoke_go.sh
+
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add rustfmt clippy --toolchain stable
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sdks/rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('sdks/rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run Rust smoke
+        run: ./scripts/tests/smoke_rust.sh
+
+  laravel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: mbstring, xml, curl, zip, bcmath, intl
+          tools: composer
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: sdks/laravel/vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('sdks/laravel/composer.lock', 'sdks/laravel/composer.json') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Run Laravel smoke
+        run: ./scripts/tests/smoke_laravel.sh

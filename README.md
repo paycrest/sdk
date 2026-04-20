@@ -115,6 +115,21 @@ You can validate the environment by running:
 ./scripts/tests/run_all_smoke.sh
 ```
 
+## CI and release validation
+
+This repository includes GitHub Actions workflows for quality gates:
+
+- `ci.yml` runs on pushes/PRs and executes `./scripts/tests/run_all_smoke.sh`.
+- `release-validation.yml` runs manually (`workflow_dispatch`) to verify release script guardrails in dry-run mode.
+
+Release scripts in `scripts/release/` are hardened to:
+
+- require semantic versions,
+- require a clean git working tree,
+- verify per-language package version alignment,
+- run smoke checks before release actions,
+- default to safe dry-run behavior unless explicitly asked to publish.
+
 ## Quick usage examples
 
 ### TypeScript
