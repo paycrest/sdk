@@ -13,34 +13,87 @@ import (
 const DefaultBaseURL = "https://api.paycrest.io/v2"
 
 type Client struct {
+	senderHTTP   *httpClientConfig
+	providerHTTP *httpClientConfig
+}
+
+type ClientOptions struct {
+	APIKey         string
+	SenderAPIKey   string
+	ProviderAPIKey string
+	BaseURL        string
+	Timeout        time.Duration
+}
+
+type httpClientConfig struct {
 	apiKey     string
 	baseURL    string
 	httpClient *http.Client
 }
 
 func NewClient(apiKey, baseURL string) *Client {
+	return NewClientWithOptions(ClientOptions{APIKey: apiKey, BaseURL: baseURL})
+}
+
+func NewClientWithOptions(options ClientOptions) *Client {
+	baseURL := options.BaseURL
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
 
-	return &Client{
-		apiKey:  apiKey,
-		baseURL: baseURL,
-		httpClient: &http.Client{
-			Timeout: 20 * time.Second,
-		},
+	timeout := options.Timeout
+	if timeout == 0 {
+		timeout = 20 * time.Second
 	}
+
+	senderKey := options.SenderAPIKey
+	if senderKey == "" {
+		senderKey = options.APIKey
+	}
+
+	providerKey := options.ProviderAPIKey
+	if providerKey == "" {
+		providerKey = options.APIKey
+	}
+
+	client := &Client{}
+	if senderKey != "" {
+		client.senderHTTP = &httpClientConfig{
+			apiKey:  senderKey,
+			baseURL: baseURL,
+			httpClient: &http.Client{
+				Timeout: timeout,
+			},
+		}
+	}
+	if providerKey != "" {
+		client.providerHTTP = &httpClientConfig{
+			apiKey:  providerKey,
+			baseURL: baseURL,
+			httpClient: &http.Client{
+				Timeout: timeout,
+			},
+		}
+	}
+
+	return client
 }
 
-func (c *Client) Sender() *SenderService {
-	return &SenderService{client: c}
+func (c *Client) Sender() (*SenderService, error) {
+	if c.senderHTTP == nil {
+		return nil, &APIError{Message: "sender api key is required"}
+	}
+	return &SenderService{http: c.senderHTTP}, nil
 }
 
-func (c *Client) Provider() (*struct{}, error) {
-	return nil, &APIError{Message: "provider sdk support is not available yet in v2 monorepo"}
+func (c *Client) Provider() (*ProviderService, error) {
+	if c.providerHTTP == nil {
+		return nil, &APIError{Message: "provider api key is required"}
+	}
+	return &ProviderService{http: c.providerHTTP}, nil
 }
 
-func (c *Client) request(ctx context.Context, method, path string, query map[string]string, body interface{}, out interface{}) error {
+func (c *httpClientConfig) request(ctx context.Context, method, path string, query map[string]string, body interface{}, out interface{}) error {
 	endpoint, err := url.Parse(c.baseURL + path)
 	if err != nil {
 		return err

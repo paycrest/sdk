@@ -1,11 +1,13 @@
 pub mod client;
 pub mod error;
 pub mod models;
+pub mod provider;
 pub mod sender;
 pub mod webhooks;
 
 pub use client::PaycrestClient;
 pub use error::PaycrestError;
+pub use provider::ProviderClient;
 pub use sender::SenderClient;
 
 #[cfg(test)]

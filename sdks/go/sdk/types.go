@@ -17,6 +17,12 @@ type SenderStats struct {
 	TotalFeeEarnings string `json:"totalFeeEarnings"`
 }
 
+type ProviderStats struct {
+	TotalOrders       int    `json:"totalOrders"`
+	TotalFiatVolume   string `json:"totalFiatVolume"`
+	TotalCryptoVolume string `json:"totalCryptoVolume"`
+}
+
 type PaymentOrder struct {
 	ID              string                 `json:"id"`
 	Status          string                 `json:"status"`
@@ -45,4 +51,27 @@ type ListOrdersResponse struct {
 	Page     int            `json:"page"`
 	PageSize int            `json:"pageSize"`
 	Orders   []PaymentOrder `json:"orders"`
+}
+
+type RateQuoteSide struct {
+	Rate                 string   `json:"rate"`
+	ProviderIDs          []string `json:"providerIds"`
+	OrderType            string   `json:"orderType"`
+	RefundTimeoutMinutes int      `json:"refundTimeoutMinutes"`
+}
+
+type RateQuoteResponse struct {
+	Buy  *RateQuoteSide `json:"buy,omitempty"`
+	Sell *RateQuoteSide `json:"sell,omitempty"`
+}
+
+type MarketRateSide struct {
+	MarketRate  string `json:"marketRate"`
+	MinimumRate string `json:"minimumRate"`
+	MaximumRate string `json:"maximumRate"`
+}
+
+type MarketRateResponse struct {
+	Buy  *MarketRateSide `json:"buy,omitempty"`
+	Sell *MarketRateSide `json:"sell,omitempty"`
 }

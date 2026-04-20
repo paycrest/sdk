@@ -15,6 +15,12 @@ pub enum PaycrestError {
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
-    #[error("provider sdk support is not available yet in v2 monorepo")]
-    ProviderUnavailable,
+    #[error("sender credentials are required")]
+    MissingSenderCredentials,
+
+    #[error("provider credentials are required")]
+    MissingProviderCredentials,
+
+    #[error("unable to resolve rate for requested order")]
+    MissingRateQuote,
 }
