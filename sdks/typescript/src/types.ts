@@ -90,6 +90,8 @@ export interface BaseCreateOrderRequest {
   rate?: string;
   senderFee?: string;
   senderFeePercent?: string;
+  /** Required when `method === 'gateway'` and `senderFee > 0`. */
+  senderFeeRecipient?: string;
   reference?: string;
 }
 
@@ -97,6 +99,50 @@ export type CreateOfframpOrderRequest = BaseCreateOrderRequest & {
   source: CryptoSource;
   destination: FiatDestination;
 };
+
+/**
+ * Off-ramp dispatch method.
+ *
+ * - `api` (default): aggregator-managed; SDK calls `POST /sender/orders`
+ *   and the aggregator provisions a receive address.
+ * - `gateway`: direct on-chain Gateway contract call from the sender's
+ *   wallet (bypasses the aggregator API). Requires `gateway.signer` and
+ *   `gateway.publicClient` to be configured on the client.
+ */
+export type OfframpMethod = "api" | "gateway";
+
+export interface CreateOfframpOrderOptions {
+  method?: OfframpMethod;
+}
+
+export interface GatewayOrderResult {
+  /** `Gateway.createOrder` transaction hash. */
+  txHash: string;
+  /** ERC-20 approve transaction hash, if one was sent. */
+  approveTxHash?: string;
+  gatewayAddress: string;
+  tokenAddress: string;
+  /** Amount in token base units (string-encoded BigInt). */
+  amount: string;
+  /** Rate used (decimal string, before uint96 scaling). */
+  rate: string;
+  /** Base64 envelope passed as the contract `messageHash` argument. */
+  messageHash: string;
+  refundAddress: string;
+  network: string;
+}
+
+/**
+ * Internal handle wiring viem signer + RPC + aggregator HTTP into the
+ * gateway client. Only `signer` and `publicClient` are user-supplied.
+ */
+export interface GatewayPath {
+  // Use `unknown` to avoid forcing viem types on consumers who only
+  // need the api method. The runtime check happens in GatewayClient.
+  signer: any; // viem WalletClient
+  publicClient: any; // viem PublicClient
+  aggregatorHttp: import("./http.js").HttpClient;
+}
 
 export type CreateOnrampOrderRequest = BaseCreateOrderRequest & {
   source: FiatSource;
@@ -191,4 +237,15 @@ export interface PaycrestClientOptions {
   baseUrl?: string;
   timeoutMs?: number;
   fetcher?: typeof fetch;
+  /**
+   * Required only when calling `createOfframpOrder(payload, { method: 'gateway' })`.
+   * `signer` is a viem `WalletClient` with an `account`; `publicClient` is a viem
+   * `PublicClient` for the same chain. Optional override for the aggregator's RSA
+   * public key (PEM); defaults to fetching from `GET /v2/pubkey`.
+   */
+  gateway?: {
+    signer: any;
+    publicClient: any;
+    aggregatorPublicKey?: string;
+  };
 }

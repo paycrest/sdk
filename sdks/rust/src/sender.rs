@@ -1,18 +1,43 @@
+use std::sync::Arc;
+
 use reqwest::Method;
 use serde_json::{json, Value};
 
 use crate::client::HttpContext;
 use crate::error::PaycrestError;
+use crate::gateway::{GatewayClient, GatewayOrderResult};
 use crate::models::{ListOrdersResponse, PaymentOrder, RateQuoteResponse, SenderStats};
+
+/// Result of [`SenderClient::create_offramp_order`] — carries either
+/// the aggregator-managed payment order (API dispatch) or the on-chain
+/// transaction envelope (gateway dispatch), never both.
+pub enum OfframpOrderOutcome {
+    Api(PaymentOrder),
+    Gateway(GatewayOrderResult),
+}
+
+/// Selects how an off-ramp order is dispatched. Defaults to `Api`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OfframpMethod {
+    #[default]
+    Api,
+    Gateway,
+}
 
 #[derive(Clone)]
 pub struct SenderClient {
     http: HttpContext,
+    public_http: HttpContext,
+    gateway_client: Option<Arc<GatewayClient>>,
 }
 
 impl SenderClient {
-    pub(crate) fn new(http: HttpContext) -> Self {
-        Self { http }
+    pub(crate) fn new(
+        http: HttpContext,
+        public_http: HttpContext,
+        gateway_client: Option<Arc<GatewayClient>>,
+    ) -> Self {
+        Self { http, public_http, gateway_client }
     }
 
     pub async fn create_order(&self, payload: Value) -> Result<PaymentOrder, PaycrestError> {
@@ -41,6 +66,9 @@ impl SenderClient {
         })
     }
 
+    /// Create an off-ramp order via the aggregator API path (backwards
+    /// compatible; equivalent to `create_offramp_order_with_method(...,
+    /// OfframpMethod::Api)` unwrapped into the payment order).
     pub async fn create_offramp_order(
         &self,
         payload: Value,
@@ -58,6 +86,56 @@ impl SenderClient {
             .request(Method::POST, "/sender/orders", None, Some(prepared))
             .await?;
         Ok(response.data)
+    }
+
+    /// Create an off-ramp order, dispatching through the aggregator API
+    /// (default) or directly to the on-chain Gateway contract via the
+    /// transactor configured on the client.
+    pub async fn create_offramp_order_with_method(
+        &self,
+        payload: Value,
+        method: OfframpMethod,
+    ) -> Result<OfframpOrderOutcome, PaycrestError> {
+        match method {
+            OfframpMethod::Api => {
+                let order = self.create_offramp_order(payload).await?;
+                Ok(OfframpOrderOutcome::Api(order))
+            }
+            OfframpMethod::Gateway => {
+                let gateway = self.gateway_client.as_ref().ok_or_else(|| PaycrestError::Api {
+                    status_code: 400,
+                    message:
+                        "gateway dispatch is not configured; pass ClientOptions::gateway when constructing the client"
+                            .to_string(),
+                    details: None,
+                })?;
+                let public_http = self.public_http.clone();
+                let rate_resolver = move |network: String, token: String, amount: String, fiat: String| {
+                    let public_http = public_http.clone();
+                    async move {
+                        let path = format!("/rates/{network}/{token}/{amount}/{fiat}");
+                        let response = public_http
+                            .request::<RateQuoteResponse>(
+                                Method::GET,
+                                &path,
+                                Some(&[("side", "sell".to_string())]),
+                                None,
+                            )
+                            .await?;
+                        response
+                            .data
+                            .sell
+                            .and_then(|q| Some(q.rate))
+                            .filter(|r| !r.is_empty())
+                            .ok_or(PaycrestError::MissingRateQuote)
+                    }
+                };
+                let result = gateway
+                    .create_offramp_order(&payload, rate_resolver)
+                    .await?;
+                Ok(OfframpOrderOutcome::Gateway(result))
+            }
+        }
     }
 
     pub async fn create_onramp_order(&self, payload: Value) -> Result<PaymentOrder, PaycrestError> {

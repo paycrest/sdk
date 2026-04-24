@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
+import { createCipheriv, createDecipheriv, generateKeyPairSync, privateDecrypt, constants as cryptoConstants } from "node:crypto";
 import {
   createPaycrestClient,
-  Gateway,
   GATEWAY_ABI,
-  GATEWAY_ADDRESSES,
   PaycrestApiError,
 } from "../dist/index.js";
+import { encryptRecipientPayload, buildRecipientPayload } from "../dist/encryption.js";
+import { toSubunits, scaleRate } from "../dist/gateway-client.js";
+import { getNetwork, registerNetwork } from "../dist/networks.js";
 
 function jsonResponse(payload, status = 200) {
   return {
@@ -230,46 +232,225 @@ async function testErrorMapping() {
   );
 }
 
-async function testGatewayCreateOrderCall() {
-  const gateway = new Gateway("0x1111111111111111111111111111111111111111", "base");
-  const call = gateway.buildCreateOrderCall({
-    token: "0x2222222222222222222222222222222222222222",
-    amount: "1000000",
-    rate: "1500",
-    senderFeeRecipient: "0x3333333333333333333333333333333333333333",
-    senderFee: "0",
-    refundAddress: "0x4444444444444444444444444444444444444444",
-    messageHash: "QmMessageCid",
+function testEncryptionEnvelopeRoundTrip() {
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs1", format: "pem" },
   });
 
-  assert.equal(call.to, "0x1111111111111111111111111111111111111111");
-  assert.equal(call.functionName, "createOrder");
-  assert.equal(call.value, "0");
-  assert.equal(call.args.length, 7);
-  assert.equal(call.args[0], "0x2222222222222222222222222222222222222222");
-  assert.equal(call.args[1], 1000000n);
-  assert.equal(call.args[2], 1500n);
-  assert.equal(call.args[6], "QmMessageCid");
-  assert.equal(call.abi, GATEWAY_ABI);
-}
+  const recipient = buildRecipientPayload({
+    institution: "GTBINGLA",
+    accountIdentifier: "1234567890",
+    accountName: "Jane Doe",
+    memo: "Payout",
+    providerId: "AbCdEfGh",
+  });
 
-async function testGatewayRegistryLookup() {
-  assert.throws(() => Gateway.forNetwork("unknown-net"), /No Gateway address registered/);
-  Gateway.register("test-net", "0xABCDEF0000000000000000000000000000000000");
-  const gw = Gateway.forNetwork("test-net");
-  assert.equal(gw.address, "0xABCDEF0000000000000000000000000000000000");
-  assert.equal(GATEWAY_ADDRESSES["test-net"], "0xABCDEF0000000000000000000000000000000000");
-}
+  const envelopeB64 = encryptRecipientPayload(recipient, publicKey);
+  const envelope = Buffer.from(envelopeB64, "base64");
 
-function testGatewayGetOrderInfoCall() {
-  const gateway = new Gateway("0x1111111111111111111111111111111111111111");
-  const call = gateway.buildGetOrderInfoCall(
-    "0x0000000000000000000000000000000000000000000000000000000000000001",
+  // Decode the envelope exactly as the aggregator does in Go.
+  const keyLen = envelope.readUInt32BE(0);
+  const encryptedKey = envelope.subarray(4, 4 + keyLen);
+  const aesBlock = envelope.subarray(4 + keyLen);
+  const aesNonce = aesBlock.subarray(0, 12);
+  const ciphertextWithTag = aesBlock.subarray(12);
+  const tag = ciphertextWithTag.subarray(ciphertextWithTag.length - 16);
+  const ciphertext = ciphertextWithTag.subarray(0, ciphertextWithTag.length - 16);
+
+  const aesKey = privateDecrypt(
+    { key: privateKey, padding: cryptoConstants.RSA_PKCS1_PADDING },
+    encryptedKey,
   );
-  assert.equal(call.functionName, "getOrderInfo");
-  assert.deepEqual(call.args, [
-    "0x0000000000000000000000000000000000000000000000000000000000000001",
-  ]);
+  const decipher = createDecipheriv("aes-256-gcm", aesKey, aesNonce);
+  decipher.setAuthTag(tag);
+  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+  const decoded = JSON.parse(plaintext);
+
+  assert.equal(decoded.AccountIdentifier, "1234567890");
+  assert.equal(decoded.Institution, "GTBINGLA");
+  assert.equal(decoded.ProviderID, "AbCdEfGh");
+  assert.equal(decoded.Memo, "Payout");
+  assert.equal(typeof decoded.Nonce, "string");
+  assert.equal(decoded.Metadata, null);
+}
+
+function testToSubunits() {
+  assert.equal(toSubunits("1", 6), 1_000_000n);
+  assert.equal(toSubunits("1.5", 6), 1_500_000n);
+  assert.equal(toSubunits("0.000001", 6), 1n);
+  assert.equal(toSubunits("100", 18), 100_000_000_000_000_000_000n);
+  assert.throws(() => toSubunits("0.0000001", 6), /more fractional digits/);
+  assert.throws(() => toSubunits("abc", 6), /Invalid amount/);
+}
+
+function testScaleRate() {
+  // Aggregator stores rate as `rate * 100` rounded into uint96.
+  assert.equal(scaleRate("1500"), 150_000n);
+  assert.equal(scaleRate("1499.99"), 149_999n);
+  assert.equal(scaleRate("1.23"), 123n);
+}
+
+function testNetworkRegistry() {
+  const base = getNetwork("base");
+  assert.equal(base.chainId, 8453);
+  assert.equal(base.gateway, "0x30f6a8457f8e42371e204a9c103f2bd42341dd0f");
+  assert.equal(getNetwork("BASE").slug, "base");
+  assert.throws(() => getNetwork("nope"), /Unsupported network/);
+
+  registerNetwork({
+    slug: "fake-testnet",
+    chainId: 999_999,
+    displayName: "Fake",
+    gateway: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  });
+  assert.equal(getNetwork("fake-testnet").chainId, 999_999);
+}
+
+async function testGatewayMethodRequiresSigner() {
+  // method:'gateway' must throw a clear error when no signer is configured.
+  const client = createPaycrestClient({ senderApiKey: "sender-key" });
+  const sender = client.sender();
+  await assert.rejects(
+    sender.createOfframpOrder(
+      {
+        amount: "100",
+        source: { type: "crypto", currency: "USDT", network: "base", refundAddress: "0xabc" },
+        destination: {
+          type: "fiat",
+          currency: "NGN",
+          recipient: { institution: "GTBINGLA", accountIdentifier: "1234567890", accountName: "Jane", memo: "Payout" },
+        },
+      },
+      { method: "gateway" },
+    ),
+    (err) => {
+      assert.equal(err instanceof PaycrestApiError, true);
+      assert.match(err.message, /Gateway dispatch is not configured/);
+      return true;
+    },
+  );
+}
+
+async function testGatewayMethodEndToEnd() {
+  // Stand up a fake registry + viem-shaped signer/publicClient and run the
+  // full gateway path: pubkey fetch -> tokens fetch -> approve -> createOrder.
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs1", format: "pem" },
+  });
+
+  const fetcherCalls = [];
+  const fetcher = async (url, init) => {
+    fetcherCalls.push({ url: String(url), method: init?.method });
+    if (String(url).endsWith("/tokens?network=base")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            status: "success",
+            data: [
+              {
+                symbol: "USDT",
+                contractAddress: "0xUsdtTokenAddressOnBase",
+                decimals: 6,
+                baseCurrency: "USD",
+                network: "base",
+              },
+            ],
+          };
+        },
+      };
+    }
+    if (String(url).includes("/rates/base/USDT/100/NGN")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { status: "success", data: { sell: { rate: "1500" } } };
+        },
+      };
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+
+  const writeCalls = [];
+  const signer = {
+    account: { address: "0xSenderEoA0000000000000000000000000000000" },
+    chain: { id: 8453 },
+    async writeContract(args) {
+      writeCalls.push(args);
+      return `0xtx${writeCalls.length}`;
+    },
+  };
+  const publicClient = {
+    async readContract(args) {
+      return 0n; // force the SDK to send an approve
+    },
+  };
+
+  const client = createPaycrestClient({
+    senderApiKey: "sender-key",
+    fetcher,
+    gateway: { signer, publicClient, aggregatorPublicKey: publicKey },
+  });
+  const sender = client.sender();
+
+  const result = await sender.createOfframpOrder(
+    {
+      amount: "100",
+      source: { type: "crypto", currency: "USDT", network: "base", refundAddress: "0xRefund0000000000000000000000000000000000" },
+      destination: {
+        type: "fiat",
+        currency: "NGN",
+        recipient: { institution: "GTBINGLA", accountIdentifier: "1234567890", accountName: "Jane", memo: "Payout" },
+      },
+    },
+    { method: "gateway" },
+  );
+
+  assert.equal(result.txHash, "0xtx2");
+  assert.equal(result.approveTxHash, "0xtx1");
+  assert.equal(result.gatewayAddress, "0x30f6a8457f8e42371e204a9c103f2bd42341dd0f");
+  assert.equal(result.tokenAddress, "0xUsdtTokenAddressOnBase");
+  assert.equal(result.amount, "100000000"); // 100 * 10^6
+  assert.equal(result.network, "base");
+  assert.equal(typeof result.messageHash, "string");
+
+  // approve call
+  const approve = writeCalls[0];
+  assert.equal(approve.functionName, "approve");
+  assert.equal(approve.args[0], "0x30f6a8457f8e42371e204a9c103f2bd42341dd0f");
+  assert.equal(approve.args[1], 100_000_000n);
+
+  // createOrder call
+  const create = writeCalls[1];
+  assert.equal(create.functionName, "createOrder");
+  assert.equal(create.address, "0x30f6a8457f8e42371e204a9c103f2bd42341dd0f");
+  assert.equal(create.args[0], "0xUsdtTokenAddressOnBase");
+  assert.equal(create.args[1], 100_000_000n);
+  assert.equal(create.args[2], 150_000n); // rate * 100
+  assert.equal(create.args[5], "0xRefund0000000000000000000000000000000000");
+  assert.equal(create.args[6], result.messageHash);
+
+  // Confirm the messageHash is a real hybrid envelope decryptable with the test private key.
+  const envelope = Buffer.from(result.messageHash, "base64");
+  const keyLen = envelope.readUInt32BE(0);
+  const encryptedKey = envelope.subarray(4, 4 + keyLen);
+  const aesBlock = envelope.subarray(4 + keyLen);
+  const aesNonce = aesBlock.subarray(0, 12);
+  const tag = aesBlock.subarray(aesBlock.length - 16);
+  const ciphertext = aesBlock.subarray(12, aesBlock.length - 16);
+  const aesKey = privateDecrypt({ key: privateKey, padding: cryptoConstants.RSA_PKCS1_PADDING }, encryptedKey);
+  const decipher = createDecipheriv("aes-256-gcm", aesKey, aesNonce);
+  decipher.setAuthTag(tag);
+  const plaintext = JSON.parse(Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8"));
+  assert.equal(plaintext.Institution, "GTBINGLA");
+  assert.equal(plaintext.AccountIdentifier, "1234567890");
+  assert.equal(plaintext.Memo, "Payout");
 }
 
 await testRateFirstOfframp();
@@ -280,8 +461,11 @@ await testMissingCredentials();
 await testSplitCredentials();
 await testProviderEndpoints();
 await testErrorMapping();
-await testGatewayCreateOrderCall();
-await testGatewayRegistryLookup();
-testGatewayGetOrderInfoCall();
+testEncryptionEnvelopeRoundTrip();
+testToSubunits();
+testScaleRate();
+testNetworkRegistry();
+await testGatewayMethodRequiresSigner();
+await testGatewayMethodEndToEnd();
 
 console.log("typescript contract tests passed");

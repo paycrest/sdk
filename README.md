@@ -61,52 +61,57 @@ Every language SDK exposes the same sender primitives:
 - `gateway.buildGetOrderInfoCall(orderId)`
 - `Gateway.register(network, address)` for self-hosted or non-default deployments
 
-## Two off-ramp integration paths
+## Two off-ramp integration paths — one function signature
 
-Off-ramp (crypto → fiat) can be executed in **two** ways. The SDK supports both and intentionally does not hide one in favor of the other:
+Off-ramp (crypto → fiat) can be dispatched in **two** ways. Crucially, the SDK exposes them through the **same `createOfframpOrder(payload, { method })` call** — you flip one flag. Payload shape is identical across modes.
 
-### Path A — Aggregator API (managed)
+| Method         | What it does                                                                                  | Requires                                                                                |
+| -------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `"api"` (default) | Posts to the aggregator; aggregator provisions a receive address.                           | `senderApiKey`                                                                          |
+| `"gateway"`    | SDK encrypts recipient, auto-approves ERC-20, and calls `Gateway.createOrder` on-chain.       | A signer + RPC handle (viem / web3.py / go-ethereum / ethers-rs / web3.php) on the client |
 
-Used by most integrations and all examples in [docs.paycrest.io](https://docs.paycrest.io). The SDK calls `POST /sender/orders`; the aggregator provisions a receiving wallet address and matches a provider. This is the path `sender.createOfframpOrder(...)` uses.
+When you pick `"gateway"`, the SDK handles **all** of this under the hood: network → chain id + Gateway address lookup, token → contract address + decimals lookup (live from `/v2/tokens`), `/v2/pubkey` fetch + in-memory cache, RSA-2048 + AES-256-GCM recipient envelope (byte-compatible with the aggregator), ERC-20 allowance check, `approve`, `createOrder`, and returns both tx hashes.
 
-```ts
-const order = await client.sender().createOfframpOrder({
-  amount: "100",
-  source: { type: "crypto", currency: "USDT", network: "base", refundAddress: "0xabc" },
-  destination: {
-    type: "fiat",
-    currency: "NGN",
-    recipient: { institution: "GTBINGLA", accountIdentifier: "1234567890", accountName: "John", memo: "Payout" },
-  },
-});
-// order.providerAccount.receiveAddress is the address to transfer to.
-```
-
-### Path B — Gateway contract (direct, like [noblocks](https://github.com/paycrest/noblocks))
-
-The sender calls the Paycrest Gateway contract's `createOrder` on-chain themselves. The SDK is deliberately web3-library-agnostic here: it returns the contract address, minimal ABI, function name, and argument tuple so you can plug them into viem / ethers / web3.py / go-ethereum / ethers-rs / web3.php.
+### Same call, two dispatch methods
 
 ```ts
-import { Gateway } from "@paycrest/sdk";
+// Aggregator-managed (default, no change from before)
+const order = await client.sender().createOfframpOrder(payload);
 
-Gateway.register("base", "0xGatewayAddressForBase");
-const gateway = Gateway.forNetwork("base");
-
-const call = gateway.buildCreateOrderCall({
-  token: "0xUSDTAddress",
-  amount: "1000000",            // raw token units
-  rate: "1500",                 // matches aggregator rate quote (uint96)
-  senderFeeRecipient: "0x...",
-  senderFee: "0",
-  refundAddress: "0xabc",
-  messageHash: "QmEncryptedRecipientCid",
-});
-// Feed call.to / call.abi / call.functionName / call.args to viem / ethers.
+// Direct on-chain — viem signer attached to the client
+const result = await client.sender().createOfframpOrder(payload, { method: "gateway" });
+// -> { txHash, approveTxHash?, gatewayAddress, tokenAddress, amount, rate, messageHash, refundAddress, network }
 ```
 
-Authoritative Gateway contract addresses per network live in Paycrest's documentation. `Gateway.register(...)` (or the equivalent in each language) lets operators load them at startup or override per environment.
+### Configuring the gateway path (TypeScript + viem)
 
-On-ramp (fiat → crypto) only supports Path A — lean on `sender.createOnrampOrder(...)`.
+```ts
+import { createPublicClient, createWalletClient, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { base } from "viem/chains";
+import { createPaycrestClient } from "@paycrest/sdk";
+
+const account = privateKeyToAccount(process.env.SIGNER_PRIVATE_KEY! as `0x${string}`);
+const walletClient = createWalletClient({ account, chain: base, transport: http(process.env.RPC_URL!) });
+const publicClient = createPublicClient({ chain: base, transport: http(process.env.RPC_URL!) });
+
+const client = createPaycrestClient({
+  senderApiKey: process.env.PAYCREST_SENDER_API_KEY,
+  gateway: { signer: walletClient, publicClient },
+});
+```
+
+### Other languages (Python, Go, Rust, PHP)
+
+All four expose the same pattern: configure a `GatewayTransactor` (web3-library-agnostic interface) on the client, then call `createOfframpOrder(payload, method="gateway")` (or language-idiomatic equivalent). See each SDK's `examples/offramp_gateway.*` for copy-pasteable adapters (web3.py, go-ethereum, ethers-rs, web3.php).
+
+### Aggregator public key
+
+The SDK fetches the RSA public key from `GET /v2/pubkey` on first use and caches it in-memory. Pass `aggregatorPublicKey` (or language equivalent) in the gateway config to override for tests or air-gapped environments.
+
+### On-ramp
+
+On-ramp (fiat → crypto) is aggregator-only — call `sender.createOnrampOrder(...)`. No `method` param; there's no direct-contract equivalent on the on-ramp side.
 
 ## API defaults
 
@@ -299,22 +304,25 @@ $order = $client->sender()->createOfframpOrder([
 
 ### Gateway (direct-contract off-ramp)
 
-Every SDK exposes the same Gateway helpers (TypeScript shown; Python / Go / Rust / PHP are equivalent):
+Same `createOfframpOrder(...)` call, same payload shape — pass `{ method: 'gateway' }` (or language equivalent) and the SDK handles everything on-chain:
 
 ```ts
-import { Gateway } from "@paycrest/sdk";
-
-Gateway.register("base", process.env.PAYCREST_GATEWAY_BASE!);
-const call = Gateway.forNetwork("base").buildCreateOrderCall({
-  token: "0xUSDTAddress",
-  amount: "1000000",
-  rate: "1500",
-  senderFeeRecipient: "0x...",
-  senderFee: "0",
-  refundAddress: "0xabc",
-  messageHash: "QmCid...",
-});
-// then: await walletClient.writeContract({ address: call.to, abi: call.abi, functionName: call.functionName, args: call.args });
+// Configured at client construction: gateway: { signer, publicClient }
+const result = await client.sender().createOfframpOrder(
+  {
+    amount: "100",
+    source: { type: "crypto", currency: "USDT", network: "base", refundAddress: account.address },
+    destination: {
+      type: "fiat",
+      currency: "NGN",
+      recipient: { institution: "GTBINGLA", accountIdentifier: "1234567890", accountName: "Jane", memo: "Payout" },
+    },
+  },
+  { method: "gateway" },
+);
+// result.txHash — Gateway.createOrder
+// result.approveTxHash — ERC20.approve (if allowance was insufficient)
+// result.messageHash — encrypted recipient envelope passed on-chain
 ```
 
 ## Deployment guide to each SDK repository

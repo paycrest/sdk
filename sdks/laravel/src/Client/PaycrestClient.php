@@ -2,12 +2,16 @@
 
 namespace Paycrest\SDK\Client;
 
+use Paycrest\SDK\Gateway\GatewayClient;
+use Paycrest\SDK\Gateway\GatewayTransactor;
 use RuntimeException;
 
 class PaycrestClient
 {
     private readonly ?HttpClient $senderHttp;
     private readonly ?HttpClient $providerHttp;
+    private readonly HttpClient $publicHttp;
+    private readonly ?GatewayClient $gatewayClient;
 
     public function __construct(
         ?string $apiKey = null,
@@ -15,12 +19,18 @@ class PaycrestClient
         ?string $providerApiKey = null,
         string $baseUrl = 'https://api.paycrest.io/v2',
         int $timeout = 20,
+        ?GatewayTransactor $gatewayTransactor = null,
+        ?string $aggregatorPublicKeyOverride = null,
     ) {
         $resolvedSenderKey = $senderApiKey ?: $apiKey;
         $resolvedProviderKey = $providerApiKey ?: $apiKey;
 
         $this->senderHttp = $resolvedSenderKey ? new HttpClient($resolvedSenderKey, $baseUrl, $timeout) : null;
         $this->providerHttp = $resolvedProviderKey ? new HttpClient($resolvedProviderKey, $baseUrl, $timeout) : null;
+        $this->publicHttp = new HttpClient('', $baseUrl, $timeout);
+        $this->gatewayClient = $gatewayTransactor
+            ? new GatewayClient($this->publicHttp, $gatewayTransactor, $aggregatorPublicKeyOverride)
+            : null;
     }
 
     public function sender(): SenderClient
@@ -29,7 +39,7 @@ class PaycrestClient
             throw new RuntimeException('senderApiKey (or apiKey) is required');
         }
 
-        return new SenderClient($this->senderHttp);
+        return new SenderClient($this->senderHttp, $this->gatewayClient, $this->publicHttp);
     }
 
     public function provider(): ProviderClient

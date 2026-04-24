@@ -1,9 +1,14 @@
+from typing import Optional
+
 from .errors import PaycrestAPIError
+from .gateway_client import GatewayClient, GatewayOrderResult
 
 
 class SenderClient:
-    def __init__(self, http_client):
+    def __init__(self, http_client, gateway_client: Optional[GatewayClient] = None, public_http=None):
         self._http = http_client
+        self._gateway = gateway_client
+        self._public_http = public_http
 
     def create_order(self, payload: dict) -> dict:
         source_type = payload.get("source", {}).get("type")
@@ -19,7 +24,29 @@ class SenderClient:
             status_code=400,
         )
 
-    def create_offramp_order(self, payload: dict) -> dict:
+    def create_offramp_order(self, payload: dict, method: str = "api"):
+        """Create an off-ramp order.
+
+        Args:
+            payload: The off-ramp order body (same shape in both modes).
+            method:  ``"api"`` (default) routes through the aggregator.
+                     ``"gateway"`` dispatches directly to the on-chain
+                     Gateway contract using the transactor configured on
+                     the client. The return type differs accordingly:
+
+                     - ``"api"``: ``dict`` (PaymentOrder envelope)
+                     - ``"gateway"``: :class:`GatewayOrderResult`
+        """
+        if method == "gateway":
+            if self._gateway is None:
+                raise PaycrestAPIError(
+                    "Gateway dispatch is not configured. Pass `gateway=GatewayPathConfig(...)` to PaycrestClient.",
+                    status_code=400,
+                )
+            return self._gateway.create_offramp_order(payload, rate_resolver=self._resolve_rate_for_gateway)
+        if method != "api":
+            raise PaycrestAPIError(f'Unknown off-ramp method "{method}"', status_code=400)
+
         payload = self._resolve_rate_if_missing(
             payload,
             network=payload["source"]["network"],
@@ -30,6 +57,21 @@ class SenderClient:
         )
         response = self._http.call("POST", "/sender/orders", body=payload)
         return response["data"]
+
+    def _resolve_rate_for_gateway(self, network: str, token: str, amount: str, fiat: str) -> str:
+        if self._public_http is None:
+            raise PaycrestAPIError("Public HTTP client missing for rate resolution", status_code=500)
+        response = self._public_http.call(
+            "GET",
+            f"/rates/{network}/{token}/{amount}/{fiat}",
+            query={"side": "sell"},
+        )
+        data = response.get("data") or {}
+        sell = data.get("sell") or {}
+        rate = sell.get("rate")
+        if not rate:
+            raise PaycrestAPIError("Aggregator returned no sell-side rate", status_code=404)
+        return rate
 
     def create_onramp_order(self, payload: dict) -> dict:
         payload = self._resolve_rate_if_missing(

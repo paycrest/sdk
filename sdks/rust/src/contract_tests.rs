@@ -282,62 +282,110 @@ fn preserve_public_types_reachable() {
 }
 
 #[test]
-fn gateway_build_create_order_call() {
-    use crate::gateway::{Gateway, GatewayCreateOrderParams};
+fn to_subunits_and_scale_rate() {
+    use crate::gateway::{scale_rate, to_subunits};
 
-    let gw = Gateway::new(
-        "0x1111111111111111111111111111111111111111",
-        Some("base".to_string()),
-    )
-    .expect("gateway init");
+    assert_eq!(to_subunits("1", 6).unwrap().to_string(), "1000000");
+    assert_eq!(to_subunits("1.5", 6).unwrap().to_string(), "1500000");
+    assert_eq!(to_subunits("0.000001", 6).unwrap().to_string(), "1");
+    assert!(to_subunits("0.0000001", 6).is_err());
+    assert!(to_subunits("abc", 6).is_err());
 
-    let call = gw.build_create_order_call(&GatewayCreateOrderParams {
-        token: "0x2222222222222222222222222222222222222222".to_string(),
-        amount: "1000000".to_string(),
-        rate: "1500".to_string(),
-        sender_fee_recipient: "0x3333333333333333333333333333333333333333".to_string(),
-        sender_fee: "0".to_string(),
-        refund_address: "0x4444444444444444444444444444444444444444".to_string(),
-        message_hash: "QmMessageCid".to_string(),
+    assert_eq!(scale_rate("1500").unwrap().to_string(), "150000");
+    assert_eq!(scale_rate("1499.99").unwrap().to_string(), "149999");
+    assert_eq!(scale_rate("1.23").unwrap().to_string(), "123");
+}
+
+#[test]
+fn network_lookup_and_override() {
+    use crate::networks::{get_network, register_network, NetworkInfo};
+
+    let base = get_network("base").unwrap();
+    assert_eq!(base.chain_id, 8453);
+    assert_eq!(base.gateway, "0x30f6a8457f8e42371e204a9c103f2bd42341dd0f");
+    assert!(get_network("does-not-exist").is_err());
+
+    register_network(NetworkInfo {
+        slug: "fake-testnet",
+        chain_id: 999_999,
+        display_name: "Fake",
+        gateway: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
     });
+    assert_eq!(get_network("fake-testnet").unwrap().chain_id, 999_999);
+}
 
-    assert_eq!(call.to, "0x1111111111111111111111111111111111111111");
-    assert_eq!(call.function_name, "createOrder");
-    assert_eq!(call.value, "0");
-    assert_eq!(call.args.len(), 7);
-    assert_eq!(
-        call.args[6],
-        serde_json::Value::String("QmMessageCid".to_string())
+#[tokio::test]
+async fn encryption_envelope_round_trip() {
+    use aes_gcm::aead::Aead;
+    use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+    use base64::Engine as _;
+    use rsa::pkcs1v15::Pkcs1v15Encrypt;
+    use rsa::pkcs8::EncodePublicKey;
+    use rsa::{RsaPrivateKey, RsaPublicKey};
+
+    use crate::encryption::{build_recipient_payload, encrypt_recipient_payload};
+
+    let mut rng = rand::thread_rng();
+    let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+    let public_key = RsaPublicKey::from(&private_key);
+    let pem = public_key.to_public_key_pem(rsa::pkcs8::LineEnding::LF).unwrap();
+
+    let payload = build_recipient_payload(
+        "GTBINGLA",
+        "1234567890",
+        "Jane Doe",
+        "Payout",
+        "AbCdEfGh",
+        None,
     );
+    let envelope_b64 = encrypt_recipient_payload(&payload, &pem).unwrap();
+    let envelope = base64::engine::general_purpose::STANDARD.decode(envelope_b64).unwrap();
+
+    let key_len = u32::from_be_bytes([envelope[0], envelope[1], envelope[2], envelope[3]]) as usize;
+    let encrypted_key = &envelope[4..4 + key_len];
+    let aes_block = &envelope[4 + key_len..];
+    let aes_key = private_key
+        .decrypt(Pkcs1v15Encrypt, encrypted_key)
+        .unwrap();
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&aes_key));
+    let aes_nonce = Nonce::from_slice(&aes_block[..12]);
+    let plaintext = cipher.decrypt(aes_nonce, &aes_block[12..]).unwrap();
+    let decoded: serde_json::Value = serde_json::from_slice(&plaintext).unwrap();
+
+    assert_eq!(decoded["Institution"], "GTBINGLA");
+    assert_eq!(decoded["AccountIdentifier"], "1234567890");
+    assert_eq!(decoded["ProviderID"], "AbCdEfGh");
+    assert!(decoded["Nonce"].is_string());
 }
 
-#[test]
-fn gateway_registry_lookup() {
-    use crate::gateway::{register_gateway_address, Gateway};
+#[tokio::test]
+async fn gateway_missing_configuration_errors() {
+    use serde_json::json;
 
-    let missing = Gateway::for_network("unknown-net-rust", None);
-    assert!(missing.is_err());
+    use crate::client::PaycrestClient;
+    use crate::sender::OfframpMethod;
 
-    register_gateway_address("test-net-rust", "0xABCDEF0000000000000000000000000000000000");
-    let gw = Gateway::for_network("test-net-rust", None).expect("lookup");
-    assert_eq!(gw.address, "0xABCDEF0000000000000000000000000000000000");
-}
-
-#[test]
-fn gateway_get_order_info_call() {
-    use crate::gateway::Gateway;
-
-    let gw = Gateway::new("0x1111111111111111111111111111111111111111", None).unwrap();
-    let call = gw.build_get_order_info_call(
-        "0x0000000000000000000000000000000000000000000000000000000000000001",
-    );
-    assert_eq!(call.function_name, "getOrderInfo");
-    assert_eq!(call.args.len(), 1);
-}
-
-#[test]
-fn gateway_rejects_empty_address() {
-    use crate::gateway::Gateway;
-
-    assert!(Gateway::new("", None).is_err());
+    let client = PaycrestClient::new("sender-key");
+    let sender = client.sender().unwrap();
+    let payload = json!({
+        "amount": "100",
+        "source": {"type": "crypto", "currency": "USDT", "network": "base", "refundAddress": "0xabc"},
+        "destination": {
+            "type": "fiat",
+            "currency": "NGN",
+            "recipient": {
+                "institution": "GTBINGLA",
+                "accountIdentifier": "1234567890",
+                "accountName": "Jane",
+                "memo": "Payout"
+            }
+        }
+    });
+    let result = sender
+        .create_offramp_order_with_method(payload, OfframpMethod::Gateway)
+        .await;
+    assert!(matches!(
+        result,
+        Err(PaycrestError::Api { message, .. }) if message.contains("gateway dispatch is not configured")
+    ));
 }

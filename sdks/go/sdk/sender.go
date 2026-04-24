@@ -8,7 +8,9 @@ import (
 )
 
 type SenderService struct {
-	http *httpClientConfig
+	http       *httpClientConfig
+	publicHTTP *httpClientConfig
+	gateway    *gatewayClient
 }
 
 func (s *SenderService) CreateOrder(ctx context.Context, payload map[string]interface{}) (*PaymentOrder, error) {
@@ -25,6 +27,9 @@ func (s *SenderService) CreateOrder(ctx context.Context, payload map[string]inte
 	return nil, &APIError{StatusCode: 400, Message: "invalid sender order direction"}
 }
 
+// CreateOfframpOrder posts the off-ramp order to the aggregator (API
+// path). Kept for backwards compatibility with existing callers; prefer
+// CreateOfframpOrderWithMethod for new integrations.
 func (s *SenderService) CreateOfframpOrder(ctx context.Context, payload map[string]interface{}) (*PaymentOrder, error) {
 	prepared, err := s.withResolvedRate(ctx, payload, rateInput{
 		Network: nestedString(payload, "source", "network"),
@@ -42,6 +47,50 @@ func (s *SenderService) CreateOfframpOrder(ctx context.Context, payload map[stri
 		return nil, err
 	}
 	return &response.Data, nil
+}
+
+// CreateOfframpOrderWithMethod dispatches an off-ramp order through the
+// aggregator API (method="api", default) or directly to the on-chain
+// Gateway contract (method="gateway"). Returns a union result that
+// surfaces exactly one of Payment (API) or Gateway (on-chain) based on
+// the selected dispatch method.
+func (s *SenderService) CreateOfframpOrderWithMethod(
+	ctx context.Context,
+	payload OfframpOrderPayload,
+	opts CreateOfframpOptions,
+) (*OfframpOrderResult, error) {
+	method := opts.Method
+	if method == "" {
+		method = OfframpMethodAPI
+	}
+	if method == OfframpMethodGateway {
+		if s.gateway == nil {
+			return nil, &APIError{StatusCode: 400, Message: "gateway dispatch is not configured; pass ClientOptions.Gateway when constructing the client"}
+		}
+		result, err := s.gateway.createOfframpOrder(ctx, payload, s.resolveRateForGateway)
+		if err != nil {
+			return nil, err
+		}
+		return &OfframpOrderResult{Method: OfframpMethodGateway, Gateway: result}, nil
+	}
+
+	payment, err := s.CreateOfframpOrder(ctx, payload.MarshalMap())
+	if err != nil {
+		return nil, err
+	}
+	return &OfframpOrderResult{Method: OfframpMethodAPI, Payment: payment}, nil
+}
+
+func (s *SenderService) resolveRateForGateway(ctx context.Context, network, token, amount, fiat string) (string, error) {
+	var response APIResponse[RateQuoteResponse]
+	path := fmt.Sprintf("/rates/%s/%s/%s/%s", network, token, amount, fiat)
+	if err := s.publicHTTP.request(ctx, http.MethodGet, path, map[string]string{"side": "sell"}, nil, &response); err != nil {
+		return "", err
+	}
+	if response.Data.Sell == nil || response.Data.Sell.Rate == "" {
+		return "", &APIError{StatusCode: 404, Message: "aggregator returned no sell-side rate"}
+	}
+	return response.Data.Sell.Rate, nil
 }
 
 func (s *SenderService) CreateOnrampOrder(ctx context.Context, payload map[string]interface{}) (*PaymentOrder, error) {
