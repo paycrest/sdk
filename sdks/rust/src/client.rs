@@ -1,9 +1,13 @@
+use std::sync::Arc;
+
 use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::error::PaycrestError;
+use crate::gateway::{GatewayClient, GatewayPathConfig};
 use crate::models::ApiResponse;
+use crate::registry::AggregatorRegistry;
 
 pub const DEFAULT_BASE_URL: &str = "https://api.paycrest.io/v2";
 
@@ -34,8 +38,10 @@ impl HttpContext {
         let mut builder = self
             .http
             .request(method, &url)
-            .header("API-Key", &self.api_key)
             .header("Content-Type", "application/json");
+        if !self.api_key.is_empty() {
+            builder = builder.header("API-Key", &self.api_key);
+        }
 
         if let Some(q) = query {
             builder = builder.query(q);
@@ -71,6 +77,10 @@ impl HttpContext {
 pub struct PaycrestClient {
     sender_http: Option<HttpContext>,
     provider_http: Option<HttpContext>,
+    public_http: HttpContext,
+    #[allow(dead_code)]
+    registry: Arc<AggregatorRegistry>,
+    gateway_client: Option<Arc<GatewayClient>>,
 }
 
 impl PaycrestClient {
@@ -80,6 +90,7 @@ impl PaycrestClient {
             sender_api_key: None,
             provider_api_key: None,
             base_url: DEFAULT_BASE_URL.to_string(),
+            gateway: None,
         })
     }
 
@@ -88,11 +99,25 @@ impl PaycrestClient {
         let provider_key = options.provider_api_key.or(options.api_key);
 
         let sender_http = sender_key.map(|k| HttpContext::new(k, options.base_url.clone()));
-        let provider_http = provider_key.map(|k| HttpContext::new(k, options.base_url));
+        let provider_http = provider_key.map(|k| HttpContext::new(k, options.base_url.clone()));
+        let public_http = HttpContext::new(String::new(), options.base_url.clone());
+
+        let pubkey_override = options
+            .gateway
+            .as_ref()
+            .and_then(|g| g.aggregator_public_key.clone());
+        let registry = Arc::new(AggregatorRegistry::new(public_http.clone(), pubkey_override));
+
+        let gateway_client = options.gateway.map(|cfg| {
+            Arc::new(GatewayClient::new(Arc::clone(&registry), cfg))
+        });
 
         Self {
             sender_http,
             provider_http,
+            public_http,
+            registry,
+            gateway_client,
         }
     }
 
@@ -100,7 +125,11 @@ impl PaycrestClient {
         let Some(http) = self.sender_http.clone() else {
             return Err(PaycrestError::MissingSenderCredentials);
         };
-        Ok(crate::sender::SenderClient::new(http))
+        Ok(crate::sender::SenderClient::new(
+            http,
+            self.public_http.clone(),
+            self.gateway_client.clone(),
+        ))
     }
 
     pub fn provider(&self) -> Result<crate::provider::ProviderClient, PaycrestError> {
@@ -111,21 +140,11 @@ impl PaycrestClient {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ClientOptions {
     pub api_key: Option<String>,
     pub sender_api_key: Option<String>,
     pub provider_api_key: Option<String>,
     pub base_url: String,
-}
-
-impl Default for ClientOptions {
-    fn default() -> Self {
-        Self {
-            api_key: None,
-            sender_api_key: None,
-            provider_api_key: None,
-            base_url: DEFAULT_BASE_URL.to_string(),
-        }
-    }
+    pub gateway: Option<GatewayPathConfig>,
 }

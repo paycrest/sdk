@@ -24,8 +24,17 @@
   "publishConfig": {
     "access": "public"
   },
+  "peerDependencies": {
+    "viem": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "viem": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "latest",
-    "typescript": "latest"
+    "typescript": "latest",
+    "viem": "^2.21.0"
   }
 }

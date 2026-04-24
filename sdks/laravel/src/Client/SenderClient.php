@@ -3,12 +3,16 @@
 namespace Paycrest\SDK\Client;
 
 use Paycrest\SDK\Contracts\SenderClientInterface;
+use Paycrest\SDK\Gateway\GatewayClient;
 use RuntimeException;
 
 class SenderClient implements SenderClientInterface
 {
-    public function __construct(private readonly HttpClient $http)
-    {
+    public function __construct(
+        private readonly HttpClient $http,
+        private readonly ?GatewayClient $gatewayClient = null,
+        private readonly ?HttpClient $publicHttp = null,
+    ) {
     }
 
     public function createOrder(array $payload): array
@@ -26,8 +30,30 @@ class SenderClient implements SenderClientInterface
         throw new RuntimeException('Invalid sender order direction. Expected crypto->fiat or fiat->crypto.');
     }
 
-    public function createOfframpOrder(array $payload): array
+    /**
+     * Create an off-ramp order.
+     *
+     * @param string $method 'api' (default, aggregator-managed) or
+     *                       'gateway' (direct on-chain dispatch via the
+     *                       configured transactor).
+     *
+     * @return array  When method='api', a PaymentOrder envelope. When
+     *                method='gateway', a GatewayOrderResult:
+     *                `{ txHash, approveTxHash, gatewayAddress, tokenAddress,
+     *                   amount, rate, messageHash, refundAddress, network }`.
+     */
+    public function createOfframpOrder(array $payload, string $method = 'api'): array
     {
+        if ($method === 'gateway') {
+            if ($this->gatewayClient === null) {
+                throw new RuntimeException('Gateway dispatch is not configured. Pass gatewayTransactor to PaycrestClient.');
+            }
+            return $this->gatewayClient->createOfframpOrder($payload);
+        }
+        if ($method !== 'api') {
+            throw new RuntimeException("Unknown off-ramp method \"{$method}\"");
+        }
+
         $payload = $this->resolveRateIfMissing(
             $payload,
             network: (string)($payload['source']['network'] ?? ''),

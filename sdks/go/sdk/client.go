@@ -13,8 +13,11 @@ import (
 const DefaultBaseURL = "https://api.paycrest.io/v2"
 
 type Client struct {
-	senderHTTP   *httpClientConfig
-	providerHTTP *httpClientConfig
+	senderHTTP    *httpClientConfig
+	providerHTTP  *httpClientConfig
+	publicHTTP    *httpClientConfig
+	registry      *aggregatorRegistry
+	gatewayClient *gatewayClient
 }
 
 type ClientOptions struct {
@@ -23,6 +26,9 @@ type ClientOptions struct {
 	ProviderAPIKey string
 	BaseURL        string
 	Timeout        time.Duration
+	// Gateway is required only when CreateOfframpOrder is invoked with
+	// OfframpMethodGateway. Leave nil for API-only integrations.
+	Gateway *GatewayPathConfig
 }
 
 type httpClientConfig struct {
@@ -57,6 +63,27 @@ func NewClientWithOptions(options ClientOptions) *Client {
 	}
 
 	client := &Client{}
+	client.publicHTTP = &httpClientConfig{
+		apiKey:  "",
+		baseURL: baseURL,
+		httpClient: &http.Client{
+			Timeout: timeout,
+		},
+	}
+
+	override := ""
+	if options.Gateway != nil {
+		override = options.Gateway.AggregatorPublicKey
+	}
+	client.registry = newAggregatorRegistry(client.publicHTTP, override)
+
+	if options.Gateway != nil {
+		gw, err := newGatewayClient(client.registry, options.Gateway)
+		if err == nil {
+			client.gatewayClient = gw
+		}
+	}
+
 	if senderKey != "" {
 		client.senderHTTP = &httpClientConfig{
 			apiKey:  senderKey,
@@ -83,7 +110,7 @@ func (c *Client) Sender() (*SenderService, error) {
 	if c.senderHTTP == nil {
 		return nil, &APIError{Message: "sender api key is required"}
 	}
-	return &SenderService{http: c.senderHTTP}, nil
+	return &SenderService{http: c.senderHTTP, gateway: c.gatewayClient, publicHTTP: c.publicHTTP}, nil
 }
 
 func (c *Client) Provider() (*ProviderService, error) {

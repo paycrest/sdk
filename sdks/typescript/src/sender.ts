@@ -1,8 +1,11 @@
+import { GatewayClient } from "./gateway-client.js";
 import { HttpClient, PaycrestApiError } from "./http.js";
 import {
+  CreateOfframpOrderOptions,
   CreateOfframpOrderRequest,
   CreateOnrampOrderRequest,
   CreateOrderRequest,
+  GatewayOrderResult,
   ListOrdersQuery,
   ListOrdersResponse,
   PaymentOrder,
@@ -13,7 +16,10 @@ import {
 } from "./types.js";
 
 export class SenderClient {
-  constructor(private readonly http: HttpClient) {}
+  constructor(
+    private readonly http: HttpClient,
+    private readonly gatewayClient?: GatewayClient,
+  ) {}
 
   private isOfframpOrder(payload: CreateOrderRequest): payload is CreateOfframpOrderRequest {
     return payload.source.type === "crypto" && payload.destination.type === "fiat";
@@ -37,7 +43,42 @@ export class SenderClient {
     );
   }
 
-  public async createOfframpOrder(payload: CreateOfframpOrderRequest): Promise<PaymentOrder> {
+  /**
+   * Create an off-ramp order.
+   *
+   * @param payload  Same shape regardless of dispatch method.
+   * @param options  `{ method: 'api' | 'gateway' }`. Defaults to `'api'`.
+   *                 - `'api'`: aggregator provisions a receive address;
+   *                   resolves to a `PaymentOrder` envelope.
+   *                 - `'gateway'`: SDK encrypts recipient details with the
+   *                   aggregator's RSA pubkey, ensures ERC-20 allowance,
+   *                   and calls `Gateway.createOrder` from the configured
+   *                   viem signer. Resolves to a `GatewayOrderResult`
+   *                   carrying transaction hashes + chain metadata.
+   */
+  public async createOfframpOrder(
+    payload: CreateOfframpOrderRequest,
+    options?: CreateOfframpOrderOptions & { method?: "api" },
+  ): Promise<PaymentOrder>;
+  public async createOfframpOrder(
+    payload: CreateOfframpOrderRequest,
+    options: CreateOfframpOrderOptions & { method: "gateway" },
+  ): Promise<GatewayOrderResult>;
+  public async createOfframpOrder(
+    payload: CreateOfframpOrderRequest,
+    options?: CreateOfframpOrderOptions,
+  ): Promise<PaymentOrder | GatewayOrderResult> {
+    const method = options?.method ?? "api";
+    if (method === "gateway") {
+      if (!this.gatewayClient) {
+        throw new PaycrestApiError(
+          "Gateway dispatch is not configured. Pass `gateway: { signer, publicClient }` to createPaycrestClient.",
+          400,
+        );
+      }
+      return this.gatewayClient.createOfframpOrder(payload);
+    }
+
     const preparedPayload = await this.withResolvedRate(payload, {
       network: payload.source.network,
       token: payload.source.currency,

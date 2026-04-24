@@ -22,14 +22,14 @@ class HttpClient:
         if body is not None:
             payload = json.dumps(body).encode("utf-8")
 
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["API-Key"] = self.api_key
         req = request.Request(
             url=url,
             data=payload,
             method=method,
-            headers={
-                "API-Key": self.api_key,
-                "Content-Type": "application/json",
-            },
+            headers=headers,
         )
 
         try:

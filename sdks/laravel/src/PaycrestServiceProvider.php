@@ -19,6 +19,8 @@ class PaycrestServiceProvider extends ServiceProvider
                 providerApiKey: isset($config['provider_api_key']) ? (string)$config['provider_api_key'] : null,
                 baseUrl: (string)($config['base_url'] ?? 'https://api.paycrest.io/v2'),
                 timeout: (int)($config['timeout'] ?? 20),
+                gatewayTransactor: $config['gateway_transactor'] ?? null,
+                aggregatorPublicKeyOverride: isset($config['aggregator_public_key']) ? (string)$config['aggregator_public_key'] : null,
             );
         });
     }
