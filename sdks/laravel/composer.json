@@ -1,6 +1,6 @@
 {
-  "name": "paycrest/sdk-laravel",
-  "description": "Official Paycrest SDK for Laravel",
+  "name": "paycrest/sdk",
+  "description": "Official Paycrest SDK for PHP/Laravel",
   "type": "library",
   "license": "AGPL-3.0-or-later",
   "autoload": {

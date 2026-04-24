@@ -280,3 +280,64 @@ fn preserve_public_types_reachable() {
     fn _provider(_p: ProviderClient) {}
     fn _stats(_s: SenderStats) {}
 }
+
+#[test]
+fn gateway_build_create_order_call() {
+    use crate::gateway::{Gateway, GatewayCreateOrderParams};
+
+    let gw = Gateway::new(
+        "0x1111111111111111111111111111111111111111",
+        Some("base".to_string()),
+    )
+    .expect("gateway init");
+
+    let call = gw.build_create_order_call(&GatewayCreateOrderParams {
+        token: "0x2222222222222222222222222222222222222222".to_string(),
+        amount: "1000000".to_string(),
+        rate: "1500".to_string(),
+        sender_fee_recipient: "0x3333333333333333333333333333333333333333".to_string(),
+        sender_fee: "0".to_string(),
+        refund_address: "0x4444444444444444444444444444444444444444".to_string(),
+        message_hash: "QmMessageCid".to_string(),
+    });
+
+    assert_eq!(call.to, "0x1111111111111111111111111111111111111111");
+    assert_eq!(call.function_name, "createOrder");
+    assert_eq!(call.value, "0");
+    assert_eq!(call.args.len(), 7);
+    assert_eq!(
+        call.args[6],
+        serde_json::Value::String("QmMessageCid".to_string())
+    );
+}
+
+#[test]
+fn gateway_registry_lookup() {
+    use crate::gateway::{register_gateway_address, Gateway};
+
+    let missing = Gateway::for_network("unknown-net-rust", None);
+    assert!(missing.is_err());
+
+    register_gateway_address("test-net-rust", "0xABCDEF0000000000000000000000000000000000");
+    let gw = Gateway::for_network("test-net-rust", None).expect("lookup");
+    assert_eq!(gw.address, "0xABCDEF0000000000000000000000000000000000");
+}
+
+#[test]
+fn gateway_get_order_info_call() {
+    use crate::gateway::Gateway;
+
+    let gw = Gateway::new("0x1111111111111111111111111111111111111111", None).unwrap();
+    let call = gw.build_get_order_info_call(
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+    );
+    assert_eq!(call.function_name, "getOrderInfo");
+    assert_eq!(call.args.len(), 1);
+}
+
+#[test]
+fn gateway_rejects_empty_address() {
+    use crate::gateway::Gateway;
+
+    assert!(Gateway::new("", None).is_err());
+}

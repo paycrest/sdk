@@ -33,11 +33,11 @@ fi
 composer run test:contract
 
 cat <<EOF
-Laravel SDK release prepared: $VERSION.
-Next steps in sdk-laravel repository:
+Laravel / PHP SDK release prepared: $VERSION.
+Next steps in the mirrored PHP repository:
   git tag v$VERSION
   git push origin v$VERSION
-  Ensure Packagist points to that tag.
+  Ensure Packagist "paycrest/sdk" points to that tag.
 EOF
 
 if [[ "$MODE" == "dry-run" ]]; then
