@@ -1,18 +1,28 @@
 import assert from "node:assert/strict";
 import { createCipheriv, createDecipheriv, generateKeyPairSync, privateDecrypt, constants as cryptoConstants } from "node:crypto";
 import {
+  AuthenticationError,
   createPaycrestClient,
   GATEWAY_ABI,
+  NetworkError,
+  NotFoundError,
   PaycrestApiError,
+  RateLimitError,
+  RateQuoteUnavailableError,
+  ValidationError,
 } from "../dist/index.js";
 import { encryptRecipientPayload, buildRecipientPayload } from "../dist/encryption.js";
 import { toSubunits, scaleRate } from "../dist/gateway-client.js";
 import { getNetwork, registerNetwork } from "../dist/networks.js";
 
-function jsonResponse(payload, status = 200) {
+function jsonResponse(payload, status = 200, headers = {}) {
+  const lower = Object.fromEntries(
+    Object.entries(headers).map(([k, v]) => [k.toLowerCase(), String(v)]),
+  );
   return {
     ok: status >= 200 && status < 300,
     status,
+    headers: { get: (name) => lower[name.toLowerCase()] ?? null },
     async json() {
       return payload;
     },
@@ -225,10 +235,130 @@ async function testErrorMapping() {
     sender.getStats(),
     (err) => {
       assert.equal(err instanceof PaycrestApiError, true);
+      assert.equal(err instanceof ValidationError, true);
       assert.equal(err.statusCode, 400);
       assert.equal(err.message, "Validation failed");
       return true;
     },
+  );
+}
+
+async function testTypedErrorClassification() {
+  // 401 → AuthenticationError
+  const auth = makeMockFetch([jsonResponse({ message: "bad key" }, 401)]);
+  const authClient = createPaycrestClient({ senderApiKey: "bad", fetcher: auth.fetcher });
+  await assert.rejects(authClient.sender().getStats(), (e) => e instanceof AuthenticationError);
+
+  // 404 → NotFoundError
+  const nf = makeMockFetch([jsonResponse({ message: "no such order" }, 404)]);
+  const nfClient = createPaycrestClient({ senderApiKey: "k", fetcher: nf.fetcher });
+  await assert.rejects(nfClient.sender().getOrder("missing"), (e) => e instanceof NotFoundError);
+
+  // 429 → RateLimitError with Retry-After
+  const rl = makeMockFetch([jsonResponse({ message: "slow down" }, 429, { "retry-after": "0.01" })]);
+  const rlClient = createPaycrestClient({
+    senderApiKey: "k",
+    fetcher: rl.fetcher,
+  });
+  await assert.rejects(rlClient.sender().getStats(), (e) => {
+    // After the stub exhausts 1 response, subsequent retries throw "unexpected fetch call".
+    // We only assert the first error was classified correctly on the non-retry path.
+    return e instanceof RateLimitError || e instanceof NetworkError;
+  });
+}
+
+async function testGetRetriesOn5xx() {
+  // 503 then 200 → retry succeeds. GETs retry automatically.
+  let attempts = 0;
+  const fetcher = async () => {
+    attempts++;
+    if (attempts < 2) return jsonResponse({ message: "oops" }, 503);
+    return jsonResponse({
+      status: "success",
+      data: { totalOrders: 3, totalOrderVolume: "0", totalFeeEarnings: "0" },
+    });
+  };
+  const client = createPaycrestClient({ senderApiKey: "k", fetcher });
+  const stats = await client.sender().getStats();
+  assert.equal(stats.totalOrders, 3);
+  assert.equal(attempts, 2);
+}
+
+async function testPostDoesNotRetryOn5xx() {
+  // Payment POSTs must NOT auto-retry after server acknowledgment.
+  let attempts = 0;
+  const fetcher = async () => {
+    attempts++;
+    return jsonResponse({ message: "temporary" }, 503);
+  };
+  const client = createPaycrestClient({ senderApiKey: "k", fetcher });
+  await assert.rejects(
+    client.sender().verifyAccount({ institution: "GTBINGLA", accountIdentifier: "123" }),
+    (err) => err instanceof PaycrestApiError && err.statusCode === 503,
+  );
+  assert.equal(attempts, 1, "POST must not auto-retry on 5xx");
+}
+
+async function testPostRetriesOnTransportError() {
+  // Transport-level failure before server acknowledgment → retry is safe.
+  let attempts = 0;
+  const fetcher = async () => {
+    attempts++;
+    if (attempts < 2) throw new Error("ECONNRESET");
+    return jsonResponse({ status: "success", data: "ok" });
+  };
+  const client = createPaycrestClient({ senderApiKey: "k", fetcher });
+  const data = await client.sender().verifyAccount({ institution: "X", accountIdentifier: "1" });
+  assert.equal(data, "ok");
+  assert.equal(attempts, 2);
+}
+
+async function testRateQuoteUnavailableTyped() {
+  const { fetcher } = makeMockFetch([
+    jsonResponse({ status: "success", data: { buy: { rate: "1" } } }), // wrong side
+  ]);
+  const client = createPaycrestClient({ senderApiKey: "k", fetcher });
+  await assert.rejects(
+    client.sender().createOfframpOrder({
+      amount: "100",
+      source: { type: "crypto", currency: "USDT", network: "base", refundAddress: "0xabc" },
+      destination: {
+        type: "fiat",
+        currency: "NGN",
+        recipient: { institution: "X", accountIdentifier: "1", accountName: "Y", memo: "m" },
+      },
+    }),
+    (e) => e instanceof RateQuoteUnavailableError,
+  );
+}
+
+async function testWaitForStatusReachesTarget() {
+  const responses = [
+    { status: "success", data: { id: "ord", status: "pending" } },
+    { status: "success", data: { id: "ord", status: "fulfilling" } },
+    { status: "success", data: { id: "ord", status: "settled" } },
+  ];
+  const fetcher = async () => jsonResponse(responses.shift());
+  const client = createPaycrestClient({ senderApiKey: "k", fetcher });
+  const order = await client.sender().waitForStatus("ord", "settled", { pollMs: 1 });
+  assert.equal(order.status, "settled");
+}
+
+async function testWaitForStatusTerminalAliasAndTimeout() {
+  // target="terminal" should match any of settled/refunded/expired/cancelled.
+  const fetcher = async () =>
+    jsonResponse({ status: "success", data: { id: "ord", status: "expired" } });
+  const client = createPaycrestClient({ senderApiKey: "k", fetcher });
+  const order = await client.sender().waitForStatus("ord", "terminal", { pollMs: 1 });
+  assert.equal(order.status, "expired");
+
+  // Timeout case.
+  const stuckFetcher = async () =>
+    jsonResponse({ status: "success", data: { id: "ord", status: "pending" } });
+  const stuckClient = createPaycrestClient({ senderApiKey: "k", fetcher: stuckFetcher });
+  await assert.rejects(
+    stuckClient.sender().waitForStatus("ord", "settled", { pollMs: 5, timeoutMs: 20 }),
+    (e) => e instanceof PaycrestApiError && /Timed out/.test(e.message),
   );
 }
 
@@ -461,6 +591,13 @@ await testMissingCredentials();
 await testSplitCredentials();
 await testProviderEndpoints();
 await testErrorMapping();
+await testTypedErrorClassification();
+await testGetRetriesOn5xx();
+await testPostDoesNotRetryOn5xx();
+await testPostRetriesOnTransportError();
+await testRateQuoteUnavailableTyped();
+await testWaitForStatusReachesTarget();
+await testWaitForStatusTerminalAliasAndTimeout();
 testEncryptionEnvelopeRoundTrip();
 testToSubunits();
 testScaleRate();

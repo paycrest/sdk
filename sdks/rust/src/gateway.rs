@@ -222,11 +222,7 @@ impl GatewayClient {
 }
 
 fn api_err(status: u16, msg: &str) -> PaycrestError {
-    PaycrestError::Api {
-        status_code: status,
-        message: msg.to_string(),
-        details: None,
-    }
+    PaycrestError::api(status, msg, None)
 }
 
 fn decimal_regex() -> &'static Regex {

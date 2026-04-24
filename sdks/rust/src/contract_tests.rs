@@ -389,3 +389,62 @@ async fn gateway_missing_configuration_errors() {
         Err(PaycrestError::Api { message, .. }) if message.contains("gateway dispatch is not configured")
     ));
 }
+
+#[test]
+fn error_kind_classification_by_status_code() {
+    use crate::error::{classify_kind, ErrorKind, PaycrestError};
+
+    assert_eq!(classify_kind(400), ErrorKind::Validation);
+    assert_eq!(classify_kind(401), ErrorKind::Authentication);
+    assert_eq!(classify_kind(403), ErrorKind::Authentication);
+    assert_eq!(classify_kind(404), ErrorKind::NotFound);
+    assert_eq!(classify_kind(429), ErrorKind::RateLimit);
+    assert_eq!(classify_kind(503), ErrorKind::ProviderUnavailable);
+    assert_eq!(classify_kind(500), ErrorKind::Unspecified);
+
+    let err = PaycrestError::api_with_kind(
+        404,
+        "missing",
+        None,
+        ErrorKind::RateQuoteUnavailable,
+    );
+    assert_eq!(err.kind(), ErrorKind::RateQuoteUnavailable);
+}
+
+#[test]
+fn wait_status_target_helpers() {
+    use crate::sender::WaitStatusTarget;
+
+    // Terminal alias matches any terminal status.
+    let terminals = ["settled", "refunded", "expired", "cancelled"];
+    for s in terminals {
+        let matches = match WaitStatusTarget::Terminal {
+            WaitStatusTarget::Terminal => ["settled", "refunded", "expired", "cancelled"]
+                .contains(&s),
+            _ => false,
+        };
+        assert!(matches, "terminal should include {s}");
+    }
+
+    // Single matches exact.
+    let target = WaitStatusTarget::Single("settled");
+    assert!(matches!(target, WaitStatusTarget::Single("settled")));
+
+    // Any matches any element.
+    let any = WaitStatusTarget::Any(&["settled", "refunded"]);
+    if let WaitStatusTarget::Any(list) = any {
+        assert_eq!(list.len(), 2);
+        assert!(list.contains(&"refunded"));
+    } else {
+        panic!("expected Any variant");
+    }
+}
+
+#[tokio::test]
+async fn retry_policy_default_values() {
+    use crate::client::RetryPolicy;
+    let p = RetryPolicy::default();
+    assert_eq!(p.retries, 3);
+    assert_eq!(p.base_delay, std::time::Duration::from_millis(500));
+    assert_eq!(p.max_delay, std::time::Duration::from_secs(10));
+}

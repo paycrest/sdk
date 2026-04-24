@@ -5,4 +5,5 @@ export * from "./networks.js";
 export * from "./types.js";
 export * from "./webhooks.js";
 export * from "./http.js";
+export * from "./errors.js";
 export { GATEWAY_ABI, ERC20_ABI } from "./abi.js";

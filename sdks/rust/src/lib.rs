@@ -9,9 +9,9 @@ pub mod registry;
 pub mod sender;
 pub mod webhooks;
 
-pub use client::{ClientOptions, PaycrestClient, DEFAULT_BASE_URL};
+pub use client::{ClientOptions, PaycrestClient, RetryPolicy, DEFAULT_BASE_URL};
 pub use encryption::{build_recipient_payload, encrypt_recipient_payload, RecipientPayload};
-pub use error::PaycrestError;
+pub use error::{ErrorKind, PaycrestError};
 pub use gateway::{
     scale_rate, to_subunits, GatewayClient, GatewayCreateOrderArgs, GatewayOrderResult,
     GatewayPathConfig, GatewayTransactor,
@@ -19,7 +19,9 @@ pub use gateway::{
 pub use networks::{get_network, register_network, NetworkInfo};
 pub use provider::ProviderClient;
 pub use registry::{AggregatorRegistry, SupportedToken};
-pub use sender::{OfframpMethod, OfframpOrderOutcome, SenderClient};
+pub use sender::{
+    OfframpMethod, OfframpOrderOutcome, SenderClient, WaitForStatusOptions, WaitStatusTarget,
+};
 
 #[cfg(test)]
 mod tests {

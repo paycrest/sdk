@@ -1,5 +1,10 @@
+import {
+  PaycrestApiError,
+  RateQuoteUnavailableError,
+  ValidationError,
+} from "./errors.js";
 import { GatewayClient } from "./gateway-client.js";
-import { HttpClient, PaycrestApiError } from "./http.js";
+import { HttpClient } from "./http.js";
 import {
   CreateOfframpOrderOptions,
   CreateOfframpOrderRequest,
@@ -8,12 +13,22 @@ import {
   GatewayOrderResult,
   ListOrdersQuery,
   ListOrdersResponse,
+  OrderStatus,
   PaymentOrder,
   QuoteSide,
   RateQuoteResponse,
   SenderStats,
   VerifyAccountRequest,
+  WaitForStatusOptions,
+  WaitStatusTarget,
 } from "./types.js";
+
+const TERMINAL_STATUSES = new Set<OrderStatus>([
+  "settled",
+  "refunded",
+  "expired",
+  "cancelled",
+]);
 
 export class SenderClient {
   constructor(
@@ -37,9 +52,8 @@ export class SenderClient {
       return this.createOnrampOrder(payload);
     }
 
-    throw new PaycrestApiError(
+    throw new ValidationError(
       "Invalid sender order direction. Expected crypto->fiat (offramp) or fiat->crypto (onramp).",
-      400,
     );
   }
 
@@ -71,9 +85,8 @@ export class SenderClient {
     const method = options?.method ?? "api";
     if (method === "gateway") {
       if (!this.gatewayClient) {
-        throw new PaycrestApiError(
+        throw new ValidationError(
           "Gateway dispatch is not configured. Pass `gateway: { signer, publicClient }` to createPaycrestClient.",
-          400,
         );
       }
       return this.gatewayClient.createOfframpOrder(payload);
@@ -182,9 +195,8 @@ export class SenderClient {
     const quote = await this.getTokenRate(rateInput);
     const sideQuote = quote[rateInput.side];
     if (!sideQuote?.rate) {
-      throw new PaycrestApiError(
+      throw new RateQuoteUnavailableError(
         `Unable to fetch ${rateInput.side} rate for requested order.`,
-        404,
         quote,
       );
     }
@@ -194,4 +206,55 @@ export class SenderClient {
       rate: sideQuote.rate,
     };
   }
+
+  /**
+   * Poll `getOrder(orderId)` until the order reaches `target` or the
+   * timeout expires.
+   *
+   * @param target  One of:
+   *   - a specific {@link OrderStatus} (e.g. `"settled"`)
+   *   - an array of statuses (stops when any matches)
+   *   - the literal string `"terminal"` — stops on any terminal state
+   *     (settled / refunded / expired / cancelled)
+   *
+   * Defaults: `pollMs = 3000`, `timeoutMs = 5 * 60 * 1000`.
+   * Throws {@link PaycrestApiError} on timeout with the most recent order attached.
+   */
+  public async waitForStatus(
+    orderId: string,
+    target: WaitStatusTarget,
+    opts: WaitForStatusOptions = {},
+  ): Promise<PaymentOrder> {
+    const pollMs = opts.pollMs ?? 3_000;
+    const timeoutMs = opts.timeoutMs ?? 5 * 60 * 1000;
+    const deadline = Date.now() + timeoutMs;
+
+    let last: PaymentOrder | undefined;
+    while (true) {
+      last = await this.getOrder(orderId);
+      if (matchesTarget(last.status, target)) return last;
+
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new PaycrestApiError(
+          `Timed out waiting for order ${orderId} to reach ${describeTarget(target)}; last status=${last.status}`,
+          408,
+          last,
+        );
+      }
+      await new Promise((r) => setTimeout(r, Math.min(pollMs, remaining)));
+    }
+  }
+}
+
+function matchesTarget(status: OrderStatus, target: WaitStatusTarget): boolean {
+  if (target === "terminal") return TERMINAL_STATUSES.has(status);
+  if (Array.isArray(target)) return target.includes(status);
+  return status === target;
+}
+
+function describeTarget(target: WaitStatusTarget): string {
+  if (target === "terminal") return "a terminal status";
+  if (Array.isArray(target)) return target.join("|");
+  return target;
 }

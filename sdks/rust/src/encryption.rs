@@ -73,27 +73,14 @@ pub fn encrypt_recipient_payload(
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&aes_key));
     let ciphertext = cipher
         .encrypt(Nonce::from_slice(&aes_nonce), plaintext.as_ref())
-        .map_err(|e| PaycrestError::Api {
-            status_code: 500,
-            message: format!("aes-gcm encrypt: {e}"),
-            details: None,
-        })?;
+        .map_err(|e| PaycrestError::api(500, format!("aes-gcm encrypt: {e}"), None))?;
 
-    let rsa_pub = RsaPublicKey::from_public_key_pem(public_key_pem).map_err(|e| {
-        PaycrestError::Api {
-            status_code: 500,
-            message: format!("parse aggregator public key: {e}"),
-            details: None,
-        }
-    })?;
+    let rsa_pub = RsaPublicKey::from_public_key_pem(public_key_pem)
+        .map_err(|e| PaycrestError::api(500, format!("parse aggregator public key: {e}"), None))?;
     let mut rng = rand::thread_rng();
-    let encrypted_key = rsa_pub.encrypt(&mut rng, Pkcs1v15Encrypt, &aes_key).map_err(|e| {
-        PaycrestError::Api {
-            status_code: 500,
-            message: format!("rsa encrypt: {e}"),
-            details: None,
-        }
-    })?;
+    let encrypted_key = rsa_pub
+        .encrypt(&mut rng, Pkcs1v15Encrypt, &aes_key)
+        .map_err(|e| PaycrestError::api(500, format!("rsa encrypt: {e}"), None))?;
 
     let key_len = encrypted_key.len() as u32;
     let mut envelope = Vec::with_capacity(4 + encrypted_key.len() + 12 + ciphertext.len());
