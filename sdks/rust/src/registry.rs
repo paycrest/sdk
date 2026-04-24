@@ -55,11 +55,7 @@ impl AggregatorRegistry {
             .await?;
         let pem = response.data;
         if pem.is_empty() {
-            return Err(PaycrestError::Api {
-                status_code: 500,
-                message: "aggregator /pubkey returned empty PEM".to_string(),
-                details: None,
-            });
+            return Err(PaycrestError::api(500, "aggregator /pubkey returned empty PEM", None));
         }
         if let Ok(mut guard) = self.public_key.write() {
             *guard = Some(pem.clone());
@@ -103,12 +99,12 @@ impl AggregatorRegistry {
         tokens
             .into_iter()
             .find(|t| t.symbol.to_uppercase() == want)
-            .ok_or_else(|| PaycrestError::Api {
-                status_code: 404,
-                message: format!(
-                    "token \"{symbol}\" is not enabled on network \"{network}\""
-                ),
-                details: None,
+            .ok_or_else(|| {
+                PaycrestError::api(
+                    404,
+                    format!("token \"{symbol}\" is not enabled on network \"{network}\""),
+                    None,
+                )
             })
     }
 }

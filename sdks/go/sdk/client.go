@@ -4,13 +4,37 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
 const DefaultBaseURL = "https://api.paycrest.io/v2"
+
+// RetryPolicy controls HTTP-level retries. GETs retry on transport
+// errors + 408/429/500/502/503/504. POSTs retry **only** on transport
+// errors that happened before the server acknowledged the request —
+// acknowledged POST failures aren't auto-retried because they can
+// double-submit payments.
+type RetryPolicy struct {
+	Retries     int
+	BaseDelay   time.Duration
+	MaxDelay    time.Duration
+}
+
+var DefaultRetryPolicy = RetryPolicy{
+	Retries:   3,
+	BaseDelay: 500 * time.Millisecond,
+	MaxDelay:  10 * time.Second,
+}
+
+var retryableStatusCodes = map[int]struct{}{
+	408: {}, 429: {}, 500: {}, 502: {}, 503: {}, 504: {},
+}
 
 type Client struct {
 	senderHTTP    *httpClientConfig
@@ -26,15 +50,19 @@ type ClientOptions struct {
 	ProviderAPIKey string
 	BaseURL        string
 	Timeout        time.Duration
+	// RetryPolicy overrides the default retry behaviour. Zero value
+	// means "use DefaultRetryPolicy".
+	RetryPolicy RetryPolicy
 	// Gateway is required only when CreateOfframpOrder is invoked with
 	// OfframpMethodGateway. Leave nil for API-only integrations.
 	Gateway *GatewayPathConfig
 }
 
 type httpClientConfig struct {
-	apiKey     string
-	baseURL    string
-	httpClient *http.Client
+	apiKey      string
+	baseURL     string
+	httpClient  *http.Client
+	retryPolicy RetryPolicy
 }
 
 func NewClient(apiKey, baseURL string) *Client {
@@ -52,6 +80,11 @@ func NewClientWithOptions(options ClientOptions) *Client {
 		timeout = 20 * time.Second
 	}
 
+	retryPolicy := options.RetryPolicy
+	if retryPolicy.Retries <= 0 {
+		retryPolicy = DefaultRetryPolicy
+	}
+
 	senderKey := options.SenderAPIKey
 	if senderKey == "" {
 		senderKey = options.APIKey
@@ -63,13 +96,7 @@ func NewClientWithOptions(options ClientOptions) *Client {
 	}
 
 	client := &Client{}
-	client.publicHTTP = &httpClientConfig{
-		apiKey:  "",
-		baseURL: baseURL,
-		httpClient: &http.Client{
-			Timeout: timeout,
-		},
-	}
+	client.publicHTTP = newHTTPConfig("", baseURL, timeout, retryPolicy)
 
 	override := ""
 	if options.Gateway != nil {
@@ -85,37 +112,36 @@ func NewClientWithOptions(options ClientOptions) *Client {
 	}
 
 	if senderKey != "" {
-		client.senderHTTP = &httpClientConfig{
-			apiKey:  senderKey,
-			baseURL: baseURL,
-			httpClient: &http.Client{
-				Timeout: timeout,
-			},
-		}
+		client.senderHTTP = newHTTPConfig(senderKey, baseURL, timeout, retryPolicy)
 	}
 	if providerKey != "" {
-		client.providerHTTP = &httpClientConfig{
-			apiKey:  providerKey,
-			baseURL: baseURL,
-			httpClient: &http.Client{
-				Timeout: timeout,
-			},
-		}
+		client.providerHTTP = newHTTPConfig(providerKey, baseURL, timeout, retryPolicy)
 	}
 
 	return client
 }
 
+func newHTTPConfig(apiKey, baseURL string, timeout time.Duration, retry RetryPolicy) *httpClientConfig {
+	return &httpClientConfig{
+		apiKey:  apiKey,
+		baseURL: baseURL,
+		httpClient: &http.Client{
+			Timeout: timeout,
+		},
+		retryPolicy: retry,
+	}
+}
+
 func (c *Client) Sender() (*SenderService, error) {
 	if c.senderHTTP == nil {
-		return nil, &APIError{Message: "sender api key is required"}
+		return nil, &APIError{Message: "sender api key is required", Kind: ErrValidation}
 	}
 	return &SenderService{http: c.senderHTTP, gateway: c.gatewayClient, publicHTTP: c.publicHTTP}, nil
 }
 
 func (c *Client) Provider() (*ProviderService, error) {
 	if c.providerHTTP == nil {
-		return nil, &APIError{Message: "provider api key is required"}
+		return nil, &APIError{Message: "provider api key is required", Kind: ErrValidation}
 	}
 	return &ProviderService{http: c.providerHTTP}, nil
 }
@@ -134,6 +160,35 @@ func (c *httpClientConfig) request(ctx context.Context, method, path string, que
 	}
 	endpoint.RawQuery = params.Encode()
 
+	policy := c.retryPolicy
+	if policy.Retries <= 0 {
+		policy = DefaultRetryPolicy
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= policy.Retries; attempt++ {
+		err := c.sendOnce(ctx, method, endpoint.String(), body, out)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if attempt >= policy.Retries {
+			break
+		}
+		if !isRetryableError(err, method) {
+			break
+		}
+		waitFor := computeBackoff(attempt, err, policy)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(waitFor):
+		}
+	}
+	return lastErr
+}
+
+func (c *httpClientConfig) sendOnce(ctx context.Context, method, endpoint string, body interface{}, out interface{}) error {
 	var reader io.Reader
 	if body != nil {
 		payload, err := json.Marshal(body)
@@ -143,30 +198,78 @@ func (c *httpClientConfig) request(ctx context.Context, method, path string, que
 		reader = bytes.NewBuffer(payload)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), reader)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("API-Key", c.apiKey)
+	if c.apiKey != "" {
+		req.Header.Set("API-Key", c.apiKey)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return &APIError{Kind: ErrNetwork, Message: "network error calling Paycrest API", Details: err.Error()}
 	}
 	defer resp.Body.Close()
 
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return &APIError{Kind: ErrNetwork, Message: "failed to read response body", Details: err.Error()}
 	}
 
 	if resp.StatusCode >= 400 {
 		var parsed map[string]interface{}
 		_ = json.Unmarshal(rawBody, &parsed)
 		message, _ := parsed["message"].(string)
-		return &APIError{StatusCode: resp.StatusCode, Message: message, Details: parsed["data"]}
+		if message == "" {
+			message = "Paycrest API request failed"
+		}
+		var retryAfter float64
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if v, parseErr := strconv.ParseFloat(ra, 64); parseErr == nil {
+				retryAfter = v
+			}
+		}
+		return classifyHTTPError(resp.StatusCode, message, parsed["data"], retryAfter)
 	}
 
+	if out == nil {
+		return nil
+	}
 	return json.Unmarshal(rawBody, out)
+}
+
+func isRetryableError(err error, method string) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	// Pre-acknowledgment transport errors are always safe to retry.
+	if apiErr.Kind == ErrNetwork {
+		return true
+	}
+	// Acknowledged server errors: retry only on idempotent verbs.
+	if method != http.MethodGet {
+		return false
+	}
+	_, ok := retryableStatusCodes[apiErr.StatusCode]
+	return ok
+}
+
+func computeBackoff(attempt int, err error, policy RetryPolicy) time.Duration {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.Kind == ErrRateLimit && apiErr.RetryAfterSeconds > 0 {
+		wait := time.Duration(apiErr.RetryAfterSeconds * float64(time.Second))
+		if wait > policy.MaxDelay {
+			return policy.MaxDelay
+		}
+		return wait
+	}
+	exponent := time.Duration(1<<uint(attempt-1)) * policy.BaseDelay
+	jittered := time.Duration(rand.Int63n(int64(exponent) + 1))
+	if jittered > policy.MaxDelay {
+		return policy.MaxDelay
+	}
+	return jittered
 }

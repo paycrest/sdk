@@ -3,11 +3,17 @@
 namespace Paycrest\SDK\Client;
 
 use Paycrest\SDK\Contracts\SenderClientInterface;
+use Paycrest\SDK\Errors\PaycrestApiError;
+use Paycrest\SDK\Errors\RateQuoteUnavailableError;
+use Paycrest\SDK\Errors\ValidationError;
 use Paycrest\SDK\Gateway\GatewayClient;
-use RuntimeException;
+use Paycrest\SDK\Queries\ListOrdersQuery;
+use Paycrest\SDK\Queries\WaitForStatusOptions;
 
 class SenderClient implements SenderClientInterface
 {
+    private const TERMINAL_STATUSES = ['settled', 'refunded', 'expired', 'cancelled'];
+
     public function __construct(
         private readonly HttpClient $http,
         private readonly ?GatewayClient $gatewayClient = null,
@@ -27,7 +33,7 @@ class SenderClient implements SenderClientInterface
             return $this->createOnrampOrder($payload);
         }
 
-        throw new RuntimeException('Invalid sender order direction. Expected crypto->fiat or fiat->crypto.');
+        throw new ValidationError('Invalid sender order direction. Expected crypto->fiat or fiat->crypto.');
     }
 
     /**
@@ -46,12 +52,12 @@ class SenderClient implements SenderClientInterface
     {
         if ($method === 'gateway') {
             if ($this->gatewayClient === null) {
-                throw new RuntimeException('Gateway dispatch is not configured. Pass gatewayTransactor to PaycrestClient.');
+                throw new ValidationError('Gateway dispatch is not configured. Pass gatewayTransactor to PaycrestClient.');
             }
             return $this->gatewayClient->createOfframpOrder($payload);
         }
         if ($method !== 'api') {
-            throw new RuntimeException("Unknown off-ramp method \"{$method}\"");
+            throw new ValidationError("Unknown off-ramp method \"{$method}\"");
         }
 
         $payload = $this->resolveRateIfMissing(
@@ -82,12 +88,26 @@ class SenderClient implements SenderClientInterface
         return $response['data'];
     }
 
-    public function listOrders(array $query = []): array
+    /**
+     * List sender orders. Accepts either a {@see ListOrdersQuery}
+     * value object or the legacy associative array (``['page' => …,
+     * 'pageSize' => …, 'status' => …]``) for backwards compatibility.
+     *
+     * @param ListOrdersQuery|array $query
+     */
+    public function listOrders(ListOrdersQuery|array $query = []): array
     {
+        if (is_array($query)) {
+            $query = new ListOrdersQuery(
+                page: (int)($query['page'] ?? 1),
+                pageSize: (int)($query['pageSize'] ?? 10),
+                status: $query['status'] ?? null,
+            );
+        }
         $response = $this->http->request('GET', '/sender/orders', null, [
-            'page' => $query['page'] ?? 1,
-            'pageSize' => $query['pageSize'] ?? 10,
-            'status' => $query['status'] ?? null,
+            'page' => $query->page,
+            'pageSize' => $query->pageSize,
+            'status' => $query->status,
         ]);
         return $response['data'];
     }
@@ -135,6 +155,73 @@ class SenderClient implements SenderClientInterface
         return $response['data'];
     }
 
+    /**
+     * Poll ``getOrder($orderId)`` until the order reaches ``$target``
+     * or the timeout expires.
+     *
+     * @param string|array<int,string> $target  One of: a specific status,
+     *        an array of statuses, or the literal ``"terminal"`` (any of
+     *        settled/refunded/expired/cancelled).
+     */
+    public function waitForStatus(
+        string $orderId,
+        string|array $target,
+        ?WaitForStatusOptions $options = null,
+    ): array {
+        $opts = $options ?? new WaitForStatusOptions();
+        $deadlineMs = (int)(microtime(true) * 1000) + $opts->timeoutMs;
+
+        while (true) {
+            $order = $this->getOrder($orderId);
+            if (self::matchesTarget((string)($order['status'] ?? ''), $target)) {
+                return $order;
+            }
+            $nowMs = (int)(microtime(true) * 1000);
+            if ($nowMs >= $deadlineMs) {
+                throw new PaycrestApiError(
+                    sprintf(
+                        'Timed out waiting for order %s to reach %s; last status=%s',
+                        $orderId,
+                        self::describeTarget($target),
+                        (string)($order['status'] ?? 'unknown'),
+                    ),
+                    408,
+                    $order,
+                );
+            }
+            $sleepMs = min($opts->pollMs, $deadlineMs - $nowMs);
+            usleep($sleepMs * 1000);
+        }
+    }
+
+    /**
+     * @param string|array<int,string> $target
+     */
+    private static function matchesTarget(string $status, string|array $target): bool
+    {
+        if ($target === 'terminal') {
+            return in_array($status, self::TERMINAL_STATUSES, true);
+        }
+        if (is_array($target)) {
+            return in_array($status, $target, true);
+        }
+        return $status === $target;
+    }
+
+    /**
+     * @param string|array<int,string> $target
+     */
+    private static function describeTarget(string|array $target): string
+    {
+        if ($target === 'terminal') {
+            return 'a terminal status';
+        }
+        if (is_array($target)) {
+            return implode('|', $target);
+        }
+        return $target;
+    }
+
     private function resolveRateIfMissing(
         array $payload,
         string $network,
@@ -152,7 +239,10 @@ class SenderClient implements SenderClientInterface
         $rate = is_array($sideQuote) ? ($sideQuote['rate'] ?? null) : null;
 
         if (!is_string($rate) || $rate === '') {
-            throw new RuntimeException("Unable to fetch {$side} rate for requested order.");
+            throw new RateQuoteUnavailableError(
+                "Unable to fetch {$side} rate for requested order.",
+                $quote,
+            );
         }
 
         $payload['rate'] = $rate;

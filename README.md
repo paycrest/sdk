@@ -222,6 +222,22 @@ For GitHub Actions, use the manual **Integration (manual)** workflow and provide
 
 Publish workflows require the corresponding repository secrets (`NPM_TOKEN`, `PYPI_API_TOKEN`, `CARGO_REGISTRY_TOKEN`) and enforce an explicit confirmation input before publish.
 
+Step-by-step walkthrough (env vars, first real order, webhook verification, troubleshooting): [`docs/sandbox-walkthrough.md`](docs/sandbox-walkthrough.md).
+
+## Cross-SDK parity harness
+
+A Python-stdlib fixture server replays the same off-ramp scenario (rate-first create → get) through the TypeScript / Python / Go / PHP SDKs and asserts identical HTTP traffic. Run locally:
+
+```bash
+./scripts/tests/parity/run_parity.sh
+```
+
+Rust is intentionally excluded from this harness — its wire behaviour is covered by unit tests and a cargo-based client would dominate runtime.
+
+## Changelog
+
+See [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Quick usage examples
 
 ### TypeScript

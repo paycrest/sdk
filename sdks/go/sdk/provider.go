@@ -11,6 +11,9 @@ type ProviderService struct {
 	http *httpClientConfig
 }
 
+// ProviderListOrdersParams is the typed filter for ProviderService.ListOrders.
+// ProviderListOrdersQuery is an alias provided for naming parity with the
+// other SDKs.
 type ProviderListOrdersParams struct {
 	Currency string
 	Page     int
@@ -22,6 +25,9 @@ type ProviderListOrdersParams struct {
 	From     string
 	To       string
 }
+
+// ProviderListOrdersQuery is a naming-parity alias for ProviderListOrdersParams.
+type ProviderListOrdersQuery = ProviderListOrdersParams
 
 func (p *ProviderService) ListOrders(ctx context.Context, params ProviderListOrdersParams) (*ListOrdersResponse, error) {
 	page := params.Page

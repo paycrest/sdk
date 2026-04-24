@@ -407,5 +407,125 @@ class GatewayContractTests(unittest.TestCase):
         self.assertEqual(decoded["Institution"], "GTBINGLA")
 
 
+class RoughEdgesTests(unittest.TestCase):
+    def test_typed_error_classification(self):
+        from paycrest_sdk.errors import (
+            AuthenticationError,
+            NotFoundError,
+            RateLimitError,
+            ValidationError,
+            classify_http_error,
+        )
+
+        self.assertIsInstance(classify_http_error(400, "x"), ValidationError)
+        self.assertIsInstance(classify_http_error(401, "x"), AuthenticationError)
+        self.assertIsInstance(classify_http_error(403, "x"), AuthenticationError)
+        self.assertIsInstance(classify_http_error(404, "x"), NotFoundError)
+        err = classify_http_error(429, "slow down", retry_after_seconds=2.5)
+        self.assertIsInstance(err, RateLimitError)
+        self.assertEqual(err.retry_after_seconds, 2.5)
+
+    def test_rate_quote_unavailable_subtype_on_missing_side(self):
+        from paycrest_sdk.errors import RateQuoteUnavailableError
+        from paycrest_sdk.sender import SenderClient
+
+        class _FakeHttp:
+            def call(self, *args, **kwargs):
+                # Only the rate quote is requested; returns wrong side.
+                return {"status": "success", "data": {"buy": {"rate": "1"}}}
+
+        sender = SenderClient(_FakeHttp())
+        with self.assertRaises(RateQuoteUnavailableError):
+            sender.create_offramp_order(
+                {
+                    "amount": "100",
+                    "source": {"type": "crypto", "currency": "USDT", "network": "base", "refundAddress": "0xabc"},
+                    "destination": {
+                        "type": "fiat",
+                        "currency": "NGN",
+                        "recipient": {
+                            "institution": "X",
+                            "accountIdentifier": "1",
+                            "accountName": "Y",
+                            "memo": "m",
+                        },
+                    },
+                }
+            )
+
+    def test_wait_for_status_reaches_target(self):
+        from paycrest_sdk.sender import SenderClient, WaitForStatusOptions
+
+        class _FakeHttp:
+            def __init__(self):
+                self.calls = 0
+                self.statuses = ["pending", "fulfilling", "settled"]
+
+            def call(self, method, path, body=None, query=None):
+                self.calls += 1
+                return {"status": "success", "data": {"id": "ord", "status": self.statuses.pop(0)}}
+
+        sender = SenderClient(_FakeHttp())
+        order = sender.wait_for_status("ord", "settled", WaitForStatusOptions(poll_ms=1, timeout_ms=2_000))
+        self.assertEqual(order["status"], "settled")
+
+    def test_wait_for_status_terminal_alias_and_timeout(self):
+        from paycrest_sdk.errors import PaycrestAPIError
+        from paycrest_sdk.sender import SenderClient, WaitForStatusOptions
+
+        class _Fake:
+            def __init__(self, status):
+                self.status = status
+
+            def call(self, *a, **k):
+                return {"status": "success", "data": {"id": "o", "status": self.status}}
+
+        # target="terminal" matches expired
+        ok = SenderClient(_Fake("expired"))
+        self.assertEqual(ok.wait_for_status("o", "terminal", WaitForStatusOptions(poll_ms=1)).get("status"), "expired")
+
+        # stuck on pending → times out
+        stuck = SenderClient(_Fake("pending"))
+        with self.assertRaises(PaycrestAPIError):
+            stuck.wait_for_status("o", "settled", WaitForStatusOptions(poll_ms=1, timeout_ms=20))
+
+    def test_list_orders_accepts_value_object(self):
+        from paycrest_sdk.sender import ListOrdersQuery, SenderClient
+
+        class _Fake:
+            def __init__(self):
+                self.last_query = None
+
+            def call(self, method, path, body=None, query=None):
+                self.last_query = query
+                return {"status": "success", "data": {"orders": []}}
+
+        http = _Fake()
+        sender = SenderClient(http)
+        sender.list_orders(ListOrdersQuery(page=2, page_size=50, status="settled"))
+        self.assertEqual(http.last_query, {"page": 2, "pageSize": 50, "status": "settled"})
+
+    def test_provider_list_orders_value_object(self):
+        from paycrest_sdk.provider import ProviderClient, ProviderListOrdersQuery
+
+        class _Fake:
+            def __init__(self):
+                self.last_query = None
+
+            def call(self, method, path, body=None, query=None):
+                self.last_query = query
+                return {"status": "success", "data": {"orders": []}}
+
+        http = _Fake()
+        provider = ProviderClient(http)
+        provider.list_orders(
+            ProviderListOrdersQuery(currency="NGN", page=3, page_size=25, status="pending", ordering="asc")
+        )
+        self.assertEqual(http.last_query["currency"], "NGN")
+        self.assertEqual(http.last_query["page"], 3)
+        self.assertEqual(http.last_query["pageSize"], 25)
+        self.assertEqual(http.last_query["ordering"], "asc")
+
+
 if __name__ == "__main__":
     unittest.main()

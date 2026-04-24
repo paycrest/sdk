@@ -1,7 +1,37 @@
-from typing import Optional
+from __future__ import annotations
 
-from .errors import PaycrestAPIError
+import time
+from dataclasses import dataclass, field
+from typing import Iterable, Optional, Sequence, Union
+
+from .errors import (
+    PaycrestAPIError,
+    RateQuoteUnavailableError,
+    ValidationError,
+)
 from .gateway_client import GatewayClient, GatewayOrderResult
+
+TERMINAL_STATUSES = frozenset({"settled", "refunded", "expired", "cancelled"})
+WaitStatusTarget = Union[str, Sequence[str]]
+
+
+@dataclass
+class ListOrdersQuery:
+    """Typed filter object for ``SenderClient.list_orders`` (and provider
+    equivalents via the provider client).
+    """
+
+    page: int = 1
+    page_size: int = 10
+    status: Optional[str] = None
+
+
+@dataclass
+class WaitForStatusOptions:
+    """Options for :meth:`SenderClient.wait_for_status`."""
+
+    poll_ms: int = 3_000
+    timeout_ms: int = 5 * 60 * 1000
 
 
 class SenderClient:
@@ -19,9 +49,8 @@ class SenderClient:
         if source_type == "fiat" and destination_type == "crypto":
             return self.create_onramp_order(payload)
 
-        raise PaycrestAPIError(
+        raise ValidationError(
             "Invalid sender order direction. Expected crypto->fiat or fiat->crypto.",
-            status_code=400,
         )
 
     def create_offramp_order(self, payload: dict, method: str = "api"):
@@ -39,13 +68,12 @@ class SenderClient:
         """
         if method == "gateway":
             if self._gateway is None:
-                raise PaycrestAPIError(
+                raise ValidationError(
                     "Gateway dispatch is not configured. Pass `gateway=GatewayPathConfig(...)` to PaycrestClient.",
-                    status_code=400,
                 )
             return self._gateway.create_offramp_order(payload, rate_resolver=self._resolve_rate_for_gateway)
         if method != "api":
-            raise PaycrestAPIError(f'Unknown off-ramp method "{method}"', status_code=400)
+            raise ValidationError(f'Unknown off-ramp method "{method}"')
 
         payload = self._resolve_rate_if_missing(
             payload,
@@ -70,7 +98,7 @@ class SenderClient:
         sell = data.get("sell") or {}
         rate = sell.get("rate")
         if not rate:
-            raise PaycrestAPIError("Aggregator returned no sell-side rate", status_code=404)
+            raise RateQuoteUnavailableError("Aggregator returned no sell-side rate", details=data)
         return rate
 
     def create_onramp_order(self, payload: dict) -> dict:
@@ -85,11 +113,26 @@ class SenderClient:
         response = self._http.call("POST", "/sender/orders", body=payload)
         return response["data"]
 
-    def list_orders(self, page: int = 1, page_size: int = 10, status: str | None = None) -> dict:
+    def list_orders(
+        self,
+        query: Optional[ListOrdersQuery] = None,
+        *,
+        page: int = 1,
+        page_size: int = 10,
+        status: Optional[str] = None,
+    ) -> dict:
+        """List sender orders.
+
+        Accepts either a :class:`ListOrdersQuery` value object or legacy
+        keyword arguments (``page``, ``page_size``, ``status``) for
+        backwards compatibility.
+        """
+        if query is None:
+            query = ListOrdersQuery(page=page, page_size=page_size, status=status)
         response = self._http.call(
             "GET",
             "/sender/orders",
-            query={"page": page, "pageSize": page_size, "status": status},
+            query={"page": query.page, "pageSize": query.page_size, "status": query.status},
         )
         return response["data"]
 
@@ -125,6 +168,36 @@ class SenderClient:
         )
         return response["data"]
 
+    def wait_for_status(
+        self,
+        order_id: str,
+        target: WaitStatusTarget,
+        options: Optional[WaitForStatusOptions] = None,
+    ) -> dict:
+        """Poll ``get_order(order_id)`` until the order reaches ``target``
+        or the timeout expires.
+
+        ``target`` accepts a specific status, an iterable of statuses, or
+        the literal string ``"terminal"`` (settled / refunded / expired /
+        cancelled).
+        """
+        opts = options or WaitForStatusOptions()
+        deadline = time.monotonic() + (opts.timeout_ms / 1000)
+        last: Optional[dict] = None
+        while True:
+            last = self.get_order(order_id)
+            if _matches_target(last.get("status"), target):
+                return last
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise PaycrestAPIError(
+                    f"Timed out waiting for order {order_id} to reach {_describe_target(target)}; "
+                    f"last status={last.get('status')}",
+                    status_code=408,
+                    details=last,
+                )
+            time.sleep(min(opts.poll_ms / 1000, remaining))
+
     def _resolve_rate_if_missing(
         self,
         payload: dict,
@@ -140,12 +213,29 @@ class SenderClient:
         quote = self.get_token_rate(network=network, token=token, amount=amount, fiat=fiat, side=side)
         side_quote = quote.get(side)
         if not side_quote or not side_quote.get("rate"):
-            raise PaycrestAPIError(
+            raise RateQuoteUnavailableError(
                 f"Unable to fetch {side} rate for requested order.",
-                status_code=404,
                 details=quote,
             )
 
         prepared = dict(payload)
         prepared["rate"] = side_quote["rate"]
         return prepared
+
+
+def _matches_target(status: Optional[str], target: WaitStatusTarget) -> bool:
+    if status is None:
+        return False
+    if target == "terminal":
+        return status in TERMINAL_STATUSES
+    if isinstance(target, str):
+        return status == target
+    return status in set(target)
+
+
+def _describe_target(target: WaitStatusTarget) -> str:
+    if target == "terminal":
+        return "a terminal status"
+    if isinstance(target, str):
+        return target
+    return "|".join(target)

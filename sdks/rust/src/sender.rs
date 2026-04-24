@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use reqwest::Method;
 use serde_json::{json, Value};
@@ -7,6 +8,39 @@ use crate::client::HttpContext;
 use crate::error::PaycrestError;
 use crate::gateway::{GatewayClient, GatewayOrderResult};
 use crate::models::{ListOrdersResponse, PaymentOrder, RateQuoteResponse, SenderStats};
+
+const TERMINAL_STATUSES: &[&str] = &["settled", "refunded", "expired", "cancelled"];
+
+/// Target status(es) for [`SenderClient::wait_for_status`].
+#[derive(Clone, Copy, Debug)]
+pub enum WaitStatusTarget<'a> {
+    Single(&'a str),
+    Any(&'a [&'a str]),
+    Terminal,
+}
+
+/// Polling options for [`SenderClient::wait_for_status`].
+#[derive(Default, Clone, Copy, Debug)]
+pub struct WaitForStatusOptions {
+    pub poll_interval: Option<Duration>,
+    pub timeout: Option<Duration>,
+}
+
+fn matches_wait_target(status: &str, target: WaitStatusTarget<'_>) -> bool {
+    match target {
+        WaitStatusTarget::Single(s) => status == s,
+        WaitStatusTarget::Any(list) => list.iter().any(|s| *s == status),
+        WaitStatusTarget::Terminal => TERMINAL_STATUSES.contains(&status),
+    }
+}
+
+fn describe_target(target: WaitStatusTarget<'_>) -> String {
+    match target {
+        WaitStatusTarget::Single(s) => s.to_string(),
+        WaitStatusTarget::Any(list) => list.join("|"),
+        WaitStatusTarget::Terminal => "a terminal status".to_string(),
+    }
+}
 
 /// Result of [`SenderClient::create_offramp_order`] — carries either
 /// the aggregator-managed payment order (API dispatch) or the on-chain
@@ -59,11 +93,12 @@ impl SenderClient {
             return self.create_onramp_order(payload).await;
         }
 
-        Err(PaycrestError::Api {
-            status_code: 400,
-            message: "invalid sender order direction".to_string(),
-            details: None,
-        })
+        Err(PaycrestError::api_with_kind(
+            400,
+            "invalid sender order direction",
+            None,
+            crate::error::ErrorKind::Validation,
+        ))
     }
 
     /// Create an off-ramp order via the aggregator API path (backwards
@@ -102,12 +137,13 @@ impl SenderClient {
                 Ok(OfframpOrderOutcome::Api(order))
             }
             OfframpMethod::Gateway => {
-                let gateway = self.gateway_client.as_ref().ok_or_else(|| PaycrestError::Api {
-                    status_code: 400,
-                    message:
-                        "gateway dispatch is not configured; pass ClientOptions::gateway when constructing the client"
-                            .to_string(),
-                    details: None,
+                let gateway = self.gateway_client.as_ref().ok_or_else(|| {
+                    PaycrestError::api_with_kind(
+                        400,
+                        "gateway dispatch is not configured; pass ClientOptions::gateway when constructing the client",
+                        None,
+                        crate::error::ErrorKind::Validation,
+                    )
                 })?;
                 let public_http = self.public_http.clone();
                 let rate_resolver = move |network: String, token: String, amount: String, fiat: String| {
@@ -203,6 +239,43 @@ impl SenderClient {
             .request(Method::POST, "/verify-account", None, Some(payload))
             .await?;
         Ok(response.data)
+    }
+
+    /// Poll `get_order(order_id)` until the order reaches `target` or
+    /// the timeout expires. `target` may be a specific status, a slice
+    /// of statuses, or the literal string `"terminal"` (settled /
+    /// refunded / expired / cancelled).
+    pub async fn wait_for_status(
+        &self,
+        order_id: &str,
+        target: WaitStatusTarget<'_>,
+        options: WaitForStatusOptions,
+    ) -> Result<PaymentOrder, PaycrestError> {
+        let poll = options.poll_interval.unwrap_or(std::time::Duration::from_secs(3));
+        let timeout = options.timeout.unwrap_or(std::time::Duration::from_secs(300));
+        let deadline = std::time::Instant::now() + timeout;
+
+        loop {
+            let order = self.get_order(order_id).await?;
+            let status = order.status.clone();
+            if matches_wait_target(&status, target) {
+                return Ok(order);
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return Err(PaycrestError::api(
+                    408,
+                    format!(
+                        "timed out waiting for order {order_id} to reach {}; last status={status}",
+                        describe_target(target)
+                    ),
+                    None,
+                ));
+            }
+            let remaining = deadline.saturating_duration_since(now);
+            let sleep_for = std::cmp::min(poll, remaining);
+            tokio::time::sleep(sleep_for).await;
+        }
     }
 
     pub async fn get_token_rate(

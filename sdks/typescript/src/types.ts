@@ -198,6 +198,16 @@ export interface ListOrdersQuery {
   status?: OrderStatus;
 }
 
+/** Target for {@link SenderClient.waitForStatus}. */
+export type WaitStatusTarget = OrderStatus | OrderStatus[] | "terminal";
+
+export interface WaitForStatusOptions {
+  /** Poll interval in milliseconds. Default: 3000. */
+  pollMs?: number;
+  /** Overall timeout in milliseconds. Default: 300000 (5 min). */
+  timeoutMs?: number;
+}
+
 export interface ProviderListOrdersQuery extends ListOrdersQuery {
   currency: string;
   ordering?: "asc" | "desc";
