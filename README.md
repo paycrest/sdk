@@ -1,14 +1,16 @@
 # Paycrest SDK Monorepo (Bazel)
 
-Multi-language SDK monorepo for the Paycrest API (`https://api.paycrest.io/v2`), designed to publish first-class clients for:
+Multi-language SDK monorepo for the Paycrest API (`https://api.paycrest.io/v2`), designed to publish first-class clients with a single canonical identity — **`paycrest/sdk`** — adapted to each registry's naming rules:
 
-- TypeScript (`@paycrest/sdk`)
-- Python (`paycrest-sdk`)
-- Go (`github.com/paycrest/sdk-go`)
-- Rust (`paycrest-sdk`)
-- Laravel / PHP (`paycrest/sdk-laravel`)
+| Language        | Package identity           | Why that exact form                                                                                  |
+| --------------- | -------------------------- | ---------------------------------------------------------------------------------------------------- |
+| TypeScript (npm)| `@paycrest/sdk`            | npm scoped package form.                                                                             |
+| Python (PyPI)   | `paycrest-sdk`             | PyPI has no scope separator; hyphenated equivalent is the canonical form.                            |
+| Rust (crates.io)| `paycrest-sdk`             | crates.io has no scope separator.                                                                    |
+| PHP (Packagist) | `paycrest/sdk`             | Packagist supports `vendor/package`, so the canonical identity is used verbatim.                     |
+| Go (modules)    | `github.com/paycrest/sdk-go` | Go modules require the module path to match the git repo URL. The Go mirror lives at `paycrest/sdk-go`, so the `-go` suffix is mandated by Go's module system. |
 
-Current scope includes **Sender** and **Provider**. The repository structure intentionally supports future expansion for other protocol parties.
+Current scope includes **Sender** and **Provider**, and both aggregator-API and direct Gateway-contract off-ramp paths. The repository structure intentionally supports future expansion for other protocol parties.
 
 ## Design goals
 
@@ -51,6 +53,60 @@ Every language SDK exposes the same sender primitives:
 - `sender.verifyAccount({ institution, accountIdentifier })`
 - `sender.getTokenRate({ network, token, amount, fiat, side })`
 - `verifyWebhookSignature(rawBody, signature, secret)`
+
+…and the same off-ramp Gateway primitives (direct-contract path):
+
+- `Gateway.forNetwork(network, addressOverride?)`
+- `gateway.buildCreateOrderCall({ token, amount, rate, senderFeeRecipient, senderFee, refundAddress, messageHash })`
+- `gateway.buildGetOrderInfoCall(orderId)`
+- `Gateway.register(network, address)` for self-hosted or non-default deployments
+
+## Two off-ramp integration paths
+
+Off-ramp (crypto → fiat) can be executed in **two** ways. The SDK supports both and intentionally does not hide one in favor of the other:
+
+### Path A — Aggregator API (managed)
+
+Used by most integrations and all examples in [docs.paycrest.io](https://docs.paycrest.io). The SDK calls `POST /sender/orders`; the aggregator provisions a receiving wallet address and matches a provider. This is the path `sender.createOfframpOrder(...)` uses.
+
+```ts
+const order = await client.sender().createOfframpOrder({
+  amount: "100",
+  source: { type: "crypto", currency: "USDT", network: "base", refundAddress: "0xabc" },
+  destination: {
+    type: "fiat",
+    currency: "NGN",
+    recipient: { institution: "GTBINGLA", accountIdentifier: "1234567890", accountName: "John", memo: "Payout" },
+  },
+});
+// order.providerAccount.receiveAddress is the address to transfer to.
+```
+
+### Path B — Gateway contract (direct, like [noblocks](https://github.com/paycrest/noblocks))
+
+The sender calls the Paycrest Gateway contract's `createOrder` on-chain themselves. The SDK is deliberately web3-library-agnostic here: it returns the contract address, minimal ABI, function name, and argument tuple so you can plug them into viem / ethers / web3.py / go-ethereum / ethers-rs / web3.php.
+
+```ts
+import { Gateway } from "@paycrest/sdk";
+
+Gateway.register("base", "0xGatewayAddressForBase");
+const gateway = Gateway.forNetwork("base");
+
+const call = gateway.buildCreateOrderCall({
+  token: "0xUSDTAddress",
+  amount: "1000000",            // raw token units
+  rate: "1500",                 // matches aggregator rate quote (uint96)
+  senderFeeRecipient: "0x...",
+  senderFee: "0",
+  refundAddress: "0xabc",
+  messageHash: "QmEncryptedRecipientCid",
+});
+// Feed call.to / call.abi / call.functionName / call.args to viem / ethers.
+```
+
+Authoritative Gateway contract addresses per network live in Paycrest's documentation. `Gateway.register(...)` (or the equivalent in each language) lets operators load them at startup or override per environment.
+
+On-ramp (fiat → crypto) only supports Path A — lean on `sender.createOnrampOrder(...)`.
 
 ## API defaults
 
@@ -226,7 +282,7 @@ let sender = client.sender()?;
 let stats = sender.get_stats().await?;
 ```
 
-### Laravel
+### Laravel / PHP
 
 ```php
 $client = app(\Paycrest\SDK\Client\PaycrestClient::class);
@@ -239,6 +295,26 @@ $order = $client->sender()->createOfframpOrder([
         'recipient' => ['institution' => 'GTBINGLA', 'accountIdentifier' => '1234567890', 'accountName' => 'John', 'memo' => 'Payout']
     ],
 ]);
+```
+
+### Gateway (direct-contract off-ramp)
+
+Every SDK exposes the same Gateway helpers (TypeScript shown; Python / Go / Rust / PHP are equivalent):
+
+```ts
+import { Gateway } from "@paycrest/sdk";
+
+Gateway.register("base", process.env.PAYCREST_GATEWAY_BASE!);
+const call = Gateway.forNetwork("base").buildCreateOrderCall({
+  token: "0xUSDTAddress",
+  amount: "1000000",
+  rate: "1500",
+  senderFeeRecipient: "0x...",
+  senderFee: "0",
+  refundAddress: "0xabc",
+  messageHash: "QmCid...",
+});
+// then: await walletClient.writeContract({ address: call.to, abi: call.abi, functionName: call.functionName, args: call.args });
 ```
 
 ## Deployment guide to each SDK repository
@@ -285,15 +361,18 @@ git subtree split --prefix=sdks/rust -b release/rust
 
 Then create release tag and publish to crates.io from the Rust repository.
 
-### 5) Laravel repository deployment (`paycrest/sdk-laravel`)
+### 5) Laravel / PHP repository deployment (Packagist: `paycrest/sdk`)
 
 ```bash
 ./scripts/release/release_laravel.sh 2.0.0
 git subtree split --prefix=sdks/laravel -b release/laravel
-# push release/laravel branch to paycrest/sdk-laravel
+# push release/laravel branch to the mirrored PHP repository
 ```
 
-Then tag `v<version>` and ensure Packagist syncs that tag.
+Then tag `v<version>` and ensure Packagist syncs that tag. The Composer
+package name on Packagist is `paycrest/sdk` — consumers install via
+`composer require paycrest/sdk`. The git mirror repo name is an
+infrastructure detail and does not appear in consumer-facing identity.
 
 ## Coordinated multi-language release
 

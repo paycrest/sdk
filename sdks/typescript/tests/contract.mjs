@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { createPaycrestClient, PaycrestApiError } from "../dist/index.js";
+import {
+  createPaycrestClient,
+  Gateway,
+  GATEWAY_ABI,
+  GATEWAY_ADDRESSES,
+  PaycrestApiError,
+} from "../dist/index.js";
 
 function jsonResponse(payload, status = 200) {
   return {
@@ -224,6 +230,48 @@ async function testErrorMapping() {
   );
 }
 
+async function testGatewayCreateOrderCall() {
+  const gateway = new Gateway("0x1111111111111111111111111111111111111111", "base");
+  const call = gateway.buildCreateOrderCall({
+    token: "0x2222222222222222222222222222222222222222",
+    amount: "1000000",
+    rate: "1500",
+    senderFeeRecipient: "0x3333333333333333333333333333333333333333",
+    senderFee: "0",
+    refundAddress: "0x4444444444444444444444444444444444444444",
+    messageHash: "QmMessageCid",
+  });
+
+  assert.equal(call.to, "0x1111111111111111111111111111111111111111");
+  assert.equal(call.functionName, "createOrder");
+  assert.equal(call.value, "0");
+  assert.equal(call.args.length, 7);
+  assert.equal(call.args[0], "0x2222222222222222222222222222222222222222");
+  assert.equal(call.args[1], 1000000n);
+  assert.equal(call.args[2], 1500n);
+  assert.equal(call.args[6], "QmMessageCid");
+  assert.equal(call.abi, GATEWAY_ABI);
+}
+
+async function testGatewayRegistryLookup() {
+  assert.throws(() => Gateway.forNetwork("unknown-net"), /No Gateway address registered/);
+  Gateway.register("test-net", "0xABCDEF0000000000000000000000000000000000");
+  const gw = Gateway.forNetwork("test-net");
+  assert.equal(gw.address, "0xABCDEF0000000000000000000000000000000000");
+  assert.equal(GATEWAY_ADDRESSES["test-net"], "0xABCDEF0000000000000000000000000000000000");
+}
+
+function testGatewayGetOrderInfoCall() {
+  const gateway = new Gateway("0x1111111111111111111111111111111111111111");
+  const call = gateway.buildGetOrderInfoCall(
+    "0x0000000000000000000000000000000000000000000000000000000000000001",
+  );
+  assert.equal(call.functionName, "getOrderInfo");
+  assert.deepEqual(call.args, [
+    "0x0000000000000000000000000000000000000000000000000000000000000001",
+  ]);
+}
+
 await testRateFirstOfframp();
 await testRateFirstOnramp();
 await testManualRateSkipsQuote();
@@ -232,5 +280,8 @@ await testMissingCredentials();
 await testSplitCredentials();
 await testProviderEndpoints();
 await testErrorMapping();
+await testGatewayCreateOrderCall();
+await testGatewayRegistryLookup();
+testGatewayGetOrderInfoCall();
 
 console.log("typescript contract tests passed");

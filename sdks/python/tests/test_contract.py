@@ -222,5 +222,81 @@ class ClientCredentialTests(unittest.TestCase):
             client.provider()
 
 
+class GatewayContractTests(unittest.TestCase):
+    def test_build_create_order_call_shape(self):
+        from paycrest_sdk.gateway import (
+            GATEWAY_ABI,
+            Gateway,
+            GatewayCreateOrderParams,
+        )
+
+        gateway = Gateway("0x1111111111111111111111111111111111111111", network="base")
+        call = gateway.build_create_order_call(
+            GatewayCreateOrderParams(
+                token="0x2222222222222222222222222222222222222222",
+                amount=1000000,
+                rate=1500,
+                sender_fee_recipient="0x3333333333333333333333333333333333333333",
+                sender_fee=0,
+                refund_address="0x4444444444444444444444444444444444444444",
+                message_hash="QmMessageCid",
+            )
+        )
+
+        self.assertEqual(call.to, "0x1111111111111111111111111111111111111111")
+        self.assertEqual(call.function_name, "createOrder")
+        self.assertEqual(call.value, "0")
+        self.assertEqual(call.abi, GATEWAY_ABI)
+        self.assertEqual(
+            call.args,
+            (
+                "0x2222222222222222222222222222222222222222",
+                1000000,
+                1500,
+                "0x3333333333333333333333333333333333333333",
+                0,
+                "0x4444444444444444444444444444444444444444",
+                "QmMessageCid",
+            ),
+        )
+
+    def test_registry_lookup(self):
+        from paycrest_sdk.gateway import GATEWAY_ADDRESSES, Gateway
+
+        with self.assertRaises(ValueError):
+            Gateway.for_network("unknown-net")
+
+        Gateway.register("test-net", "0xABCDEF0000000000000000000000000000000000")
+        gateway = Gateway.for_network("test-net")
+        self.assertEqual(
+            gateway.address, "0xABCDEF0000000000000000000000000000000000"
+        )
+        self.assertEqual(
+            GATEWAY_ADDRESSES["test-net"],
+            "0xABCDEF0000000000000000000000000000000000",
+        )
+
+    def test_get_order_info_call(self):
+        from paycrest_sdk.gateway import Gateway
+
+        gateway = Gateway("0x1111111111111111111111111111111111111111")
+        call = gateway.build_get_order_info_call(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        )
+        self.assertEqual(call.function_name, "getOrderInfo")
+        self.assertEqual(
+            call.args,
+            (
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+            ),
+        )
+
+    def test_constructor_requires_address(self):
+        from paycrest_sdk.gateway import Gateway
+
+        with self.assertRaises(ValueError):
+            Gateway("")
+
+
 if __name__ == "__main__":
     unittest.main()

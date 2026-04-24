@@ -55,9 +55,11 @@ Target repo: `paycrest/sdk-rust`
 3. Push tag `rust-v<version>`.
 4. Mirror `sdks/rust` subtree to dedicated repository.
 
-## Laravel repository deployment
+## Laravel / PHP repository deployment
 
-Target repo: `paycrest/sdk-laravel`
+Packagist package: `paycrest/sdk` (canonical identity, no `-laravel` suffix).
+The mirrored git repo name is an infrastructure detail; what consumers install
+is `composer require paycrest/sdk`.
 
 1. Run `./scripts/release/release_laravel.sh <version> --dry-run`
 2. Publish mode (`RELEASE_CONFIRM=YES ./scripts/release/release_laravel.sh <version> --publish`) validates contracts and prints the operator steps for tag + Packagist sync.

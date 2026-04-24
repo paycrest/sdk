@@ -90,10 +90,10 @@ jobs:
     needs: validate
     if: ${{ inputs.force_publish }}
     steps:
-      - name: Publish instructions for Laravel package
+      - name: Publish instructions for Laravel / PHP package
         run: |
-          echo "Release validation complete for Laravel SDK v${{ inputs.version }}."
-          echo "Publishing requires the mirrored sdk-laravel repository:"
+          echo "Release validation complete for Laravel / PHP SDK v${{ inputs.version }}."
+          echo "Publishing requires the mirrored PHP repository (Packagist: paycrest/sdk):"
           echo "  1) tag v${{ inputs.version }}"
           echo "  2) push tag to remote"
           echo "  3) ensure Packagist sync/webhook updates package metadata"
