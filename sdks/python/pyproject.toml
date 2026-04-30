@@ -12,13 +12,28 @@ license = { text = "AGPL-3.0-or-later" }
 authors = [
   { name = "Paycrest" }
 ]
+keywords = ["paycrest", "sdk", "payments", "stablecoin", "offramp", "onramp", "fiat", "crypto"]
 dependencies = [
   "cryptography>=41.0.0",
 ]
 classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
   "License :: OSI Approved :: GNU Affero General Public License v3",
-  "Programming Language :: Python :: 3"
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Office/Business :: Financial",
+  "Topic :: Software Development :: Libraries :: Python Modules"
 ]
+
+[project.urls]
+Homepage = "https://docs.paycrest.io"
+Repository = "https://github.com/paycrest/sdk"
+Issues = "https://github.com/paycrest/sdk/issues"
+Changelog = "https://github.com/paycrest/sdk/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["paycrest_sdk*"]

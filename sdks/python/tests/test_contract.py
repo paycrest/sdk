@@ -253,7 +253,7 @@ class GatewayContractTests(unittest.TestCase):
         from cryptography.hazmat.primitives.asymmetric import padding, rsa
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-        from paycrest_sdk import build_recipient_payload, encrypt_recipient_payload
+        from paycrest_sdk.encryption import build_recipient_payload, encrypt_recipient_payload
 
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         public_pem = key.public_key().public_bytes(

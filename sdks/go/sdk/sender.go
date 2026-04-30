@@ -105,7 +105,7 @@ func (s *SenderService) CreateOfframpOrderWithMethod(
 	}
 	if method == OfframpMethodGateway {
 		if s.gateway == nil {
-			return nil, &APIError{StatusCode: 400, Kind: ErrValidation, Message: "gateway dispatch is not configured; pass ClientOptions.Gateway when constructing the client"}
+			return nil, &APIError{StatusCode: 400, Kind: ErrValidation, Message: "Gateway dispatch is not configured. Pass ClientOptions.Gateway when constructing the client."}
 		}
 		result, err := s.gateway.createOfframpOrder(ctx, payload, s.resolveRateForGateway)
 		if err != nil {

@@ -1,10 +1,15 @@
 openapi: 3.0.3
 info:
   title: Paycrest Sender SDK Contract
-  version: 1.0.0
+  version: 2.0.0
   description: |
-    Canonical contract for Paycrest Sender SDK across all supported languages.
-    This file intentionally captures the sender-focused SDK surface.
+    Canonical contract for the Paycrest SDKs across all supported languages.
+    This file captures the aggregator endpoints the SDKs talk to.
+
+    Note: the direct-contract off-ramp path
+    (`createOfframpOrder({ method: 'gateway' })`) is a client-side flow
+    layered on top of `/v2/pubkey` + `/v2/tokens` plus on-chain calls. It
+    does not introduce new aggregator endpoints beyond those listed here.
 servers:
   - url: https://api.paycrest.io/v2
 components:

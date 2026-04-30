@@ -3,6 +3,19 @@
   "description": "Official Paycrest SDK for PHP/Laravel",
   "type": "library",
   "license": "AGPL-3.0-or-later",
+  "homepage": "https://docs.paycrest.io",
+  "keywords": ["paycrest", "sdk", "payments", "stablecoin", "offramp", "onramp", "fiat", "laravel"],
+  "authors": [
+    {
+      "name": "Paycrest",
+      "homepage": "https://paycrest.io"
+    }
+  ],
+  "support": {
+    "issues": "https://github.com/paycrest/sdk/issues",
+    "source": "https://github.com/paycrest/sdk",
+    "docs": "https://docs.paycrest.io"
+  },
   "autoload": {
     "psr-4": {
       "Paycrest\\SDK\\": "src/"

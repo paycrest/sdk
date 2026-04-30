@@ -5,6 +5,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning fol
 
 ## [Unreleased]
 
+### Pre-2.1 cleanup pass
+
+- **Security**: Rust `verify_webhook_signature` now uses constant-time HMAC verification (`Mac::verify_slice`) instead of `==`. The other four SDKs were already constant-time (`crypto.timingSafeEqual`, `hmac.compare_digest`, `hmac.Equal`, `hash_equals`).
+- **Correctness**: TS retry loop floors `policy.retries` to `1` so an explicit `retries: 0` no longer short-circuits to `"Unknown HTTP failure"` without ever calling fetch.
+- **Correctness**: TS `onResponse` hook now reports the actual response status code (was hardcoded to `200`, dropping 201/202/204 signal for metrics consumers).
+- **Correctness**: TS `waitForStatus` `sleepOrAbort` simplified to a single source of truth on abort — listener and timer just resolve, the loop's top-of-iteration check throws the typed 499 once.
+- **Cross-SDK parity**: Rust now uses `ErrorKind::RateQuoteUnavailable` like the other four SDKs (was a separate `MissingRateQuote` enum variant). All five SDKs throw the same typed error with the same message format on missing rate quotes.
+- **Cross-SDK parity**: "Gateway dispatch is not configured" wording now consistent across SDKs (capital G + period). Test assertions updated.
+- **Type safety**: TS `gateway.signer` and `gateway.publicClient` now typed as `viem.WalletClient` / `viem.PublicClient` (were `any`). `GatewayPath` marked `@internal`.
+- **Public surface**: Python `__all__` trimmed — `RecipientPayload`, `build_recipient_payload`, `encrypt_recipient_payload`, `AggregatorRegistry` no longer top-level exports (still importable via `paycrest_sdk.encryption` / `paycrest_sdk.registry`).
+- **Public surface**: TS `WaitForStatusOptions.signal` doc corrected to say it throws a `PaycrestApiError` with `statusCode === 499` on abort (was incorrectly "throws a NetworkError").
+- **Layout**: PHP `Uuid::v4()` extracted to `Paycrest\SDK\Support\Uuid` so `SenderClient` no longer reaches into `HttpClient` for it.
+- **Layout**: PHP `SenderClient` no longer accepts a dead `$publicHttp` constructor argument.
+- **Bazel**: dropped redundant `//sdks/laravel:contract` `sh_test` (was identical to `:smoke`).
+- **Packaging**: `repository`, `homepage`, `bugs` / `support`, `keywords`, `categories`, `documentation` filled out across `package.json`, `pyproject.toml`, `Cargo.toml`, `composer.json`. TS dev deps pinned (no more `latest`). Each SDK directory now has its own README.
+- **Docs**: `specs/openapi.yaml` bumped from `1.0.0` to `2.0.0` to match the shipping SDKs. README + `docs/sandbox-walkthrough.md` corrected to say the parity harness covers all 5 SDKs (Rust included since bucket 3).
+- **Cleanup**: Parity driver no longer relies on curl URL-normalization (`$BASE_URL/../__reset` → `$SERVER_ROOT/__reset` etc.).
+- **Cleanup**: removed stale unused imports from `paycrest_sdk/sender.py` (`Iterable`, `field`, `GatewayOrderResult`).
+
+Deferred to a follow-up cleanup PR (tracked in the PR description): Go `CreateOfframpOrder` / `WithOpts` / `WithMethod` consolidation, Rust streaming pagination iterator + framework webhook middleware, registry TOCTOU on first-fetch (Rust/Go/Python), Python/PHP webhook helpers picking HTTP status by string-matching error messages.
+
 ### Added — bucket 3 (production polish)
 
 - **Webhook framework middleware** for every language so integrators stop hand-rolling the same ten-line signature verifier:

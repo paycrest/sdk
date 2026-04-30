@@ -40,7 +40,7 @@ class PaycrestClient
             throw new RuntimeException('senderApiKey (or apiKey) is required');
         }
 
-        return new SenderClient($this->senderHttp, $this->gatewayClient, $this->publicHttp);
+        return new SenderClient($this->senderHttp, $this->gatewayClient);
     }
 
     public function provider(): ProviderClient

@@ -17,7 +17,6 @@ class SenderClient implements SenderClientInterface
     public function __construct(
         private readonly HttpClient $http,
         private readonly ?GatewayClient $gatewayClient = null,
-        private readonly ?HttpClient $publicHttp = null,
     ) {
     }
 
@@ -102,7 +101,7 @@ class SenderClient implements SenderClientInterface
         if (!empty($payload['reference']) && is_string($payload['reference'])) {
             return $payload;
         }
-        $payload['reference'] = HttpClient::uuidV4();
+        $payload['reference'] = \Paycrest\SDK\Support\Uuid::v4();
         return $payload;
     }
 

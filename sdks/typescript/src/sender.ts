@@ -327,24 +327,25 @@ export class SenderClient {
  */
 /**
  * setTimeout-based sleep that unwinds early when the signal aborts.
- * Rejects with a PaycrestApiError so callers can distinguish timeouts
- * from aborts in a single catch block.
+ * Resolves on timer fire OR signal abort — the caller's loop is
+ * responsible for re-checking `signal.aborted` after the await and
+ * throwing the abort error itself. Keeps the abort-throw path in one
+ * place (the loop) instead of racing it across timer + listener.
  */
 function sleepOrAbort(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
       resolve();
     }, ms);
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(new PaycrestApiError("waitForStatus aborted by caller", 499));
-    };
-    if (signal?.aborted) {
-      clearTimeout(timer);
-      reject(new PaycrestApiError("waitForStatus aborted by caller", 499));
-      return;
-    }
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 }

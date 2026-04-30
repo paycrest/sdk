@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass, field
-from typing import Iterable, Optional, Sequence, Union
+from dataclasses import dataclass
+from typing import Optional, Sequence, Union
 
 from .errors import (
     PaycrestAPIError,
     RateQuoteUnavailableError,
     ValidationError,
 )
-from .gateway_client import GatewayClient, GatewayOrderResult
+from .gateway_client import GatewayClient
 
 TERMINAL_STATUSES = frozenset({"settled", "refunded", "expired", "cancelled"})
 WaitStatusTarget = Union[str, Sequence[str]]

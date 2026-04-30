@@ -184,7 +184,7 @@ impl SenderClient {
                 let gateway = self.gateway_client.as_ref().ok_or_else(|| {
                     PaycrestError::api_with_kind(
                         400,
-                        "gateway dispatch is not configured; pass ClientOptions::gateway when constructing the client",
+                        "Gateway dispatch is not configured. Pass ClientOptions::gateway when constructing the client.",
                         None,
                         crate::error::ErrorKind::Validation,
                     )
@@ -207,7 +207,14 @@ impl SenderClient {
                             .sell
                             .and_then(|q| Some(q.rate))
                             .filter(|r| !r.is_empty())
-                            .ok_or(PaycrestError::MissingRateQuote)
+                            .ok_or_else(|| {
+                                PaycrestError::api_with_kind(
+                                    404,
+                                    "Unable to fetch sell rate for requested order.",
+                                    None,
+                                    crate::error::ErrorKind::RateQuoteUnavailable,
+                                )
+                            })
                     }
                 };
                 let result = gateway
@@ -421,7 +428,12 @@ impl SenderClient {
         };
 
         let Some(rate) = rate else {
-            return Err(PaycrestError::MissingRateQuote);
+            return Err(PaycrestError::api_with_kind(
+                404,
+                format!("Unable to fetch {} rate for requested order.", input.side),
+                None,
+                crate::error::ErrorKind::RateQuoteUnavailable,
+            ));
         };
 
         let mut prepared = payload;

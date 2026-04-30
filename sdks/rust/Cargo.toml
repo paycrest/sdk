@@ -4,6 +4,13 @@ version = "2.0.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 description = "Official Paycrest SDK for Rust"
+authors = ["Paycrest"]
+repository = "https://github.com/paycrest/sdk"
+homepage = "https://docs.paycrest.io"
+documentation = "https://docs.rs/paycrest-sdk"
+readme = "README.md"
+keywords = ["paycrest", "stablecoin", "payments", "offramp", "onramp"]
+categories = ["api-bindings", "cryptography::cryptocurrencies", "finance"]
 
 [dependencies]
 aes-gcm = "0.10"

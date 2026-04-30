@@ -386,7 +386,7 @@ async fn gateway_missing_configuration_errors() {
         .await;
     assert!(matches!(
         result,
-        Err(PaycrestError::Api { message, .. }) if message.contains("gateway dispatch is not configured")
+        Err(PaycrestError::Api { message, .. }) if message.contains("Gateway dispatch is not configured")
     ));
 }
 
