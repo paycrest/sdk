@@ -85,7 +85,7 @@ pub(crate) struct HttpContext {
 }
 
 impl HttpContext {
-    fn new(
+    pub(crate) fn new(
         api_key: impl Into<String>,
         base_url: impl Into<String>,
         retry_policy: RetryPolicy,

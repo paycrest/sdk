@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
@@ -51,37 +52,53 @@ class AggregatorRegistry:
         self._public_key: Optional[str] = None
         self._public_key_override = public_key_override
         self._tokens_by_network: dict[str, list[SupportedToken]] = {}
+        # Serializer for first-fetch paths so two concurrent callers
+        # don't each fire `/v2/pubkey` or `/v2/tokens?network=…`.
+        # Held only across the slow path; the cache hit returns
+        # without acquiring it.
+        self._fetch_lock = threading.Lock()
 
     def get_public_key(self) -> str:
         if self._public_key_override:
             return self._public_key_override
+        # Fast path — already fetched.
         if self._public_key:
             return self._public_key
-        response = self._http.call("GET", "/pubkey")
-        pem = response.get("data")
-        if not isinstance(pem, str) or not pem:
-            raise ValueError("Aggregator /pubkey returned no PEM data")
-        self._public_key = pem
-        return pem
+        # Slow path — serialize concurrent first-fetches so we issue
+        # exactly one `/pubkey` request even under contention.
+        with self._fetch_lock:
+            if self._public_key:
+                return self._public_key
+            response = self._http.call("GET", "/pubkey")
+            pem = response.get("data")
+            if not isinstance(pem, str) or not pem:
+                raise ValueError("Aggregator /pubkey returned no PEM data")
+            self._public_key = pem
+            return pem
 
     def get_tokens_for_network(self, network: str) -> list[SupportedToken]:
         slug = network.lower()
+        # Fast path — already fetched.
         if slug in self._tokens_by_network:
             return self._tokens_by_network[slug]
-        response = self._http.call("GET", "/tokens", query={"network": slug})
-        raw = response.get("data") or []
-        tokens = [
-            SupportedToken(
-                symbol=row["symbol"],
-                contract_address=row["contractAddress"],
-                decimals=int(row["decimals"]),
-                base_currency=row.get("baseCurrency", ""),
-                network=row.get("network", slug),
-            )
-            for row in raw
-        ]
-        self._tokens_by_network[slug] = tokens
-        return tokens
+        # Slow path — serialize concurrent first-fetches.
+        with self._fetch_lock:
+            if slug in self._tokens_by_network:
+                return self._tokens_by_network[slug]
+            response = self._http.call("GET", "/tokens", query={"network": slug})
+            raw = response.get("data") or []
+            tokens = [
+                SupportedToken(
+                    symbol=row["symbol"],
+                    contract_address=row["contractAddress"],
+                    decimals=int(row["decimals"]),
+                    base_currency=row.get("baseCurrency", ""),
+                    network=row.get("network", slug),
+                )
+                for row in raw
+            ]
+            self._tokens_by_network[slug] = tokens
+            return tokens
 
     def get_token(self, network: str, symbol: str) -> SupportedToken:
         # 1) Static registry (zero-RTT for hot tokens).
