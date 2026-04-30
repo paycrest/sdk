@@ -226,13 +226,13 @@ Step-by-step walkthrough (env vars, first real order, webhook verification, trou
 
 ## Cross-SDK parity harness
 
-A Python-stdlib fixture server replays the same off-ramp scenario (rate-first create → get) through the TypeScript / Python / Go / PHP SDKs and asserts identical HTTP traffic. Run locally:
+A Python-stdlib fixture server replays the same off-ramp scenario (rate-first create → get) through the **TypeScript / Python / Go / Rust / PHP** SDKs and asserts identical HTTP traffic. Run locally:
 
 ```bash
 ./scripts/tests/parity/run_parity.sh
 ```
 
-Rust is intentionally excluded from this harness — its wire behaviour is covered by unit tests and a cargo-based client would dominate runtime.
+Each language is gated on its toolchain being available (`node`, `python3`, `go`, `cargo`, `php`); the harness skips any missing one with a "skipping" message.
 
 ## Changelog
 

@@ -42,17 +42,18 @@ if [[ -z "${PORT:-}" ]]; then
     exit 1
 fi
 
-BASE_URL="http://127.0.0.1:$PORT/v2"
+SERVER_ROOT="http://127.0.0.1:$PORT"
+BASE_URL="$SERVER_ROOT/v2"
 export PAYCREST_BASE_URL="$BASE_URL"
 echo "parity: fixture server on $BASE_URL"
 
 # --- helpers -------------------------------------------------------------
 reset_server() {
-    curl -sS -X POST "$BASE_URL/../__reset" >/dev/null
+    curl -sS -X POST "$SERVER_ROOT/__reset" >/dev/null
 }
 
 fetch_calls() {
-    curl -sS "$BASE_URL/../__calls"
+    curl -sS "$SERVER_ROOT/__calls"
 }
 
 assert_parity() {

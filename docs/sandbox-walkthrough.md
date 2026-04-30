@@ -112,7 +112,7 @@ If you're integrating multiple SDKs at once (monorepo polyglot, mobile + backend
 ```
 
 The harness stands up a tiny Python fixture server on a random localhost port and replays the same off-ramp scenario through the
-TypeScript / Python / Go / PHP SDKs. A mismatch between any two SDKs fails the harness loudly and prints the offending request.
+TypeScript / Python / Go / Rust / PHP SDKs. A mismatch between any two SDKs fails the harness loudly and prints the offending request.
 
 ## 7. GitHub Actions
 

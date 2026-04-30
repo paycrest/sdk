@@ -41,9 +41,6 @@ pub enum PaycrestError {
 
     #[error("provider credentials are required")]
     MissingProviderCredentials,
-
-    #[error("unable to resolve rate for requested order")]
-    MissingRateQuote,
 }
 
 /// One field-level error as returned by the aggregator's 400 responses.
@@ -103,7 +100,6 @@ impl PaycrestError {
     pub fn kind(&self) -> ErrorKind {
         match self {
             PaycrestError::Api { kind, .. } => *kind,
-            PaycrestError::MissingRateQuote => ErrorKind::RateQuoteUnavailable,
             PaycrestError::MissingSenderCredentials | PaycrestError::MissingProviderCredentials => {
                 ErrorKind::Validation
             }

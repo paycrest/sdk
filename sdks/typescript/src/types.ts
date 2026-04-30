@@ -145,13 +145,16 @@ export interface GatewayOrderResult {
 
 /**
  * Internal handle wiring viem signer + RPC + aggregator HTTP into the
- * gateway client. Only `signer` and `publicClient` are user-supplied.
+ * gateway client. Only `signer` and `publicClient` are user-supplied;
+ * `aggregatorHttp` is constructed by `PaycrestClient`.
+ *
+ * @internal — not part of the published surface; consumers should pass
+ * `gateway: { signer, publicClient }` to `createPaycrestClient` instead
+ * and never construct this directly.
  */
 export interface GatewayPath {
-  // Use `unknown` to avoid forcing viem types on consumers who only
-  // need the api method. The runtime check happens in GatewayClient.
-  signer: any; // viem WalletClient
-  publicClient: any; // viem PublicClient
+  signer: import("viem").WalletClient;
+  publicClient: import("viem").PublicClient;
   aggregatorHttp: import("./http.js").HttpClient;
 }
 
@@ -219,7 +222,7 @@ export interface WaitForStatusOptions {
   timeoutMs?: number;
   /**
    * Caller-supplied abort signal. When aborted, `waitForStatus` stops
-   * polling immediately and throws a NetworkError.
+   * polling and throws a `PaycrestApiError` with `statusCode === 499`.
    */
   signal?: AbortSignal;
 }
@@ -272,13 +275,13 @@ export interface PaycrestClientOptions {
   hooks?: import("./http.js").RequestHooks;
   /**
    * Required only when calling `createOfframpOrder(payload, { method: 'gateway' })`.
-   * `signer` is a viem `WalletClient` with an `account`; `publicClient` is a viem
-   * `PublicClient` for the same chain. Optional override for the aggregator's RSA
-   * public key (PEM); defaults to fetching from `GET /v2/pubkey`.
+   * `signer` is a viem `WalletClient` with an account; `publicClient` is a viem
+   * `PublicClient` for the same chain. Optional override for the aggregator's
+   * RSA public key (PEM); defaults to fetching from `GET /v2/pubkey`.
    */
   gateway?: {
-    signer: any;
-    publicClient: any;
+    signer: import("viem").WalletClient;
+    publicClient: import("viem").PublicClient;
     aggregatorPublicKey?: string;
   };
 }

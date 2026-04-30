@@ -136,7 +136,12 @@ export class HttpClient {
       }
     }
 
-    const policy = { ...this.retryPolicy, ...retry };
+    const merged = { ...this.retryPolicy, ...retry };
+    // Always run the request at least once even if the caller explicitly
+    // sets `retries: 0` — that field counts attempts, not extra retries,
+    // and a zero would otherwise short-circuit straight to "unknown HTTP
+    // failure" without ever calling fetch.
+    const policy: RetryPolicy = { ...merged, retries: Math.max(1, merged.retries) };
     const effectiveIdempotencyKey =
       idempotencyKey ?? (method === "POST" ? randomUUID() : undefined);
     let lastError: PaycrestApiError | undefined;
@@ -154,13 +159,13 @@ export class HttpClient {
       await safelyInvoke(this.hooks.onRequest, baseCtx);
       const startedAt = Date.now();
       try {
-        const response = await this.send<T>(url, method, body, effectiveIdempotencyKey, signal);
+        const { data, statusCode } = await this.send<T>(url, method, body, effectiveIdempotencyKey, signal);
         await safelyInvoke(this.hooks.onResponse, {
           ...baseCtx,
-          statusCode: 200,
+          statusCode,
           durationMs: Date.now() - startedAt,
         });
-        return response;
+        return data;
       } catch (err) {
         const typedErr = err instanceof PaycrestApiError ? err : new NetworkError("Unexpected transport error", err);
         await safelyInvoke(this.hooks.onError, {
@@ -186,7 +191,13 @@ export class HttpClient {
     throw lastError ?? new NetworkError("Unknown HTTP failure");
   }
 
-  private async send<T>(url: URL, method: "GET" | "POST", body: unknown, idempotencyKey?: string, callerSignal?: AbortSignal): Promise<ApiResponse<T>> {
+  private async send<T>(
+    url: URL,
+    method: "GET" | "POST",
+    body: unknown,
+    idempotencyKey?: string,
+    callerSignal?: AbortSignal,
+  ): Promise<{ data: ApiResponse<T>; statusCode: number }> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -228,7 +239,7 @@ export class HttpClient {
         );
       }
 
-      return data;
+      return { data, statusCode: response.status };
     } catch (err) {
       if (err instanceof PaycrestApiError) throw err;
       // AbortError or fetch-level transport error.

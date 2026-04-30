@@ -5,9 +5,3 @@ sh_test(
     srcs = ["//scripts/tests:smoke_laravel.sh"],
     data = glob(["**"]),
 )
-
-sh_test(
-    name = "contract",
-    srcs = ["//scripts/tests:smoke_laravel.sh"],
-    data = glob(["**"]),
-)
