@@ -5,7 +5,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning fol
 
 ## [Unreleased]
 
-### Added
+### Added — bucket 3 (production polish)
+
+- **Webhook framework middleware** for every language so integrators stop hand-rolling the same ten-line signature verifier:
+  - TypeScript: `paycrestWebhook({ secret })` Express/Connect-shaped middleware + `parsePaycrestWebhook(rawBody, signature, secret)` framework-agnostic helper.
+  - Python: `parse_paycrest_webhook` (stdlib), `fastapi_paycrest_webhook` dependency, `flask_paycrest_webhook` view decorator.
+  - Go: `sdk.ParseWebhook(body, signature, secret)` + `sdk.WebhookHandler(...)` `net/http` handler.
+  - Rust: `parse_webhook(raw, sig, secret)` framework-agnostic helper.
+  - Laravel/PHP: `WebhookVerifier::parse(...)` + `VerifyPaycrestWebhook` middleware that attaches the parsed event to `$request->attributes`.
+- **Forward-compatible client-side idempotency.** Every POST now ships an auto-generated `Idempotency-Key: <uuid>` header (caller-overridable) and the SDK auto-stamps a UUID `reference` on order payloads when one isn't supplied. Aggregator currently ignores the header but stores `reference`; resubmitting with the same `reference` is the dedup lever today.
+- **`ValidationError.fieldErrors` / `field_errors` / `FieldErrors`.** The aggregator's `data: [{field, message}, ...]` payload is now lifted into a structured array on `ValidationError` so callers can wire it directly to form-field errors instead of inspecting `details`.
+- **Pagination iterators.** `iterateOrders` / `iterate_orders` / `ForEachOrder` / `iterateOrders` Generator + `listAllOrders` / `list_all_orders` / `ListAllOrders` collectors, walking pages until empty or `total` is reached.
+- **Cancellation parity.** TypeScript: `AbortSignal` accepted on requests and `waitForStatus`. Python / PHP: per-call `timeout` / `timeoutSeconds` override. Go / Rust already cancellable via `context.Context` / tokio.
+- **Cross-SDK parity harness now covers Rust.** `scripts/tests/parity/rust-client/` builds a tiny cargo crate that runs the same off-ramp scenario; harness assertions stay green for all five SDKs.
+- **Observation hooks.** `onRequest` / `onResponse` / `onError` callbacks on the HTTP client of every language, plumbed through `PaycrestClient` / `PaycrestClientOptions`. Hook exceptions are swallowed so a faulty tracer can never break SDK semantics.
+- **Static token registry.** `registerToken(...)` / `register_token(...)` / `RegisterToken(...)` / `TokenRegistry::register(...)` lets operators pre-seed common tokens at startup; the gateway path resolves them with zero-RTT, falling back to the live `/v2/tokens` fetch when not registered. Includes `preload(network)` warmer.
+
+### Changed
+
+- `viem` moved from `peerDependencies` (optional) to `dependencies`. `npm install @paycrest/sdk` now installs everything needed for the gateway path — no more secondary `npm install viem` step.
+- `RateQuoteSide` Rust struct fields default-initialize when missing (`providerIds`, `orderType`, `refundTimeoutMinutes`) so the deserializer doesn't choke on partial responses.
+
+### Added — bucket 2 (rough edges)
+
 - **Retry + backoff on every HTTP client.** GETs auto-retry on transport errors and `408/429/500/502/503/504` with exponential backoff plus jitter (capped at 10s); `Retry-After` is honored on 429. POSTs retry **only** on transport failures that precede server acknowledgment — auto-retrying acknowledged POSTs is unsafe for payment SDKs. Policy is overridable via `ClientOptions` / equivalent per language. (TS, Python, Go, Rust, PHP)
 - **Typed error taxonomy.** `PaycrestApiError` / `PaycrestAPIError` / `PaycrestError` stays as the base; new subclasses / kinds let callers branch with `instanceof` (or `errors.Is` / `matches!` / `isinstance`) instead of string-matching: `ValidationError`, `AuthenticationError`, `NotFoundError`, `RateLimitError` (carries `retryAfterSeconds`), `ProviderUnavailableError`, `OrderRejectedError`, `RateQuoteUnavailableError`, `NetworkError`. Go exposes these as an `ErrorKind` enum on `APIError`; Rust as `ErrorKind` on `PaycrestError::Api`.
 - **`waitForStatus(orderId, target, { pollMs?, timeoutMs? })`** on every sender client. `target` accepts a specific status, an array / list of statuses, or the literal `"terminal"` (any of settled / refunded / expired / cancelled). Defaults: 3 s poll, 5 min timeout. Throws a 408-classed error on timeout with the last-seen order attached.

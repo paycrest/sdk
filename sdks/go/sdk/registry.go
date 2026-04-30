@@ -17,6 +17,59 @@ type SupportedToken struct {
 	Network         string `json:"network"`
 }
 
+// Process-level static token registry. Populate at startup with
+// RegisterToken to skip the `/v2/tokens` round-trip on hot tokens.
+var (
+	staticTokensMu sync.RWMutex
+	staticTokens   = map[string]SupportedToken{}
+)
+
+func staticTokenKey(network, symbol string) string {
+	return strings.ToLower(network) + "::" + strings.ToUpper(symbol)
+}
+
+// RegisterToken adds a token to the static registry. Lookup order in
+// the gateway path: static -> in-memory cache of /tokens -> live fetch.
+func RegisterToken(token SupportedToken) {
+	staticTokensMu.Lock()
+	defer staticTokensMu.Unlock()
+	staticTokens[staticTokenKey(token.Network, token.Symbol)] = token
+}
+
+// RegisterTokens bulk-registers a list of tokens.
+func RegisterTokens(tokens []SupportedToken) {
+	staticTokensMu.Lock()
+	defer staticTokensMu.Unlock()
+	for _, t := range tokens {
+		staticTokens[staticTokenKey(t.Network, t.Symbol)] = t
+	}
+}
+
+// ListRegisteredTokens returns a snapshot of the static registry.
+func ListRegisteredTokens() []SupportedToken {
+	staticTokensMu.RLock()
+	defer staticTokensMu.RUnlock()
+	out := make([]SupportedToken, 0, len(staticTokens))
+	for _, t := range staticTokens {
+		out = append(out, t)
+	}
+	return out
+}
+
+// ClearRegisteredTokens drops all entries. Test-only escape hatch.
+func ClearRegisteredTokens() {
+	staticTokensMu.Lock()
+	defer staticTokensMu.Unlock()
+	staticTokens = map[string]SupportedToken{}
+}
+
+func staticTokenLookup(network, symbol string) (SupportedToken, bool) {
+	staticTokensMu.RLock()
+	defer staticTokensMu.RUnlock()
+	t, ok := staticTokens[staticTokenKey(network, symbol)]
+	return t, ok
+}
+
 // aggregatorRegistry caches the aggregator's public key and per-network
 // token catalog in-memory for the process lifetime.
 type aggregatorRegistry struct {
@@ -82,6 +135,12 @@ func (r *aggregatorRegistry) getTokensForNetwork(ctx context.Context, network st
 }
 
 func (r *aggregatorRegistry) getToken(ctx context.Context, network, symbol string) (SupportedToken, error) {
+	// 1) Static registry — zero-RTT for hot tokens.
+	if t, ok := staticTokenLookup(network, symbol); ok {
+		return t, nil
+	}
+
+	// 2) Live fetch (with in-memory cache).
 	tokens, err := r.getTokensForNetwork(ctx, network)
 	if err != nil {
 		return SupportedToken{}, err
@@ -97,4 +156,9 @@ func (r *aggregatorRegistry) getToken(ctx context.Context, network, symbol strin
 		known = append(known, t.Symbol)
 	}
 	return SupportedToken{}, fmt.Errorf("token %q is not enabled on network %q; known: %v", symbol, network, known)
+}
+
+// Preload warms the in-memory token cache for a network.
+func (r *aggregatorRegistry) Preload(ctx context.Context, network string) ([]SupportedToken, error) {
+	return r.getTokensForNetwork(ctx, network)
 }

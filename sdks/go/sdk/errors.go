@@ -2,6 +2,13 @@ package sdk
 
 import "fmt"
 
+// FieldError is one entry from the aggregator's 400-response
+// `{"data":[{"field":"amount","message":"required"}, ...]}` payload.
+type FieldError struct {
+	Field   string
+	Message string
+}
+
 // APIError is the base error type raised for every non-success
 // aggregator response. Callers can switch on Kind or use errors.As with
 // one of the typed variants below to branch on specific cases.
@@ -11,6 +18,10 @@ type APIError struct {
 	Details           interface{}
 	Kind              ErrorKind
 	RetryAfterSeconds float64
+	// FieldErrors is populated on 400 validation responses when the
+	// aggregator returns the conventional [{field, message}] shape.
+	// Nil / empty on non-validation errors.
+	FieldErrors []FieldError
 }
 
 // ErrorKind classifies common aggregator error cases so callers don't
@@ -93,5 +104,32 @@ func classifyHTTPError(statusCode int, message string, details interface{}, retr
 		Details:           details,
 		Kind:              kind,
 		RetryAfterSeconds: retryAfterSeconds,
+		FieldErrors:       parseFieldErrors(details),
 	}
+}
+
+// parseFieldErrors extracts the `[{field,message}, ...]` shape the
+// aggregator emits on 400 responses. Returns nil if `details` has a
+// different shape.
+func parseFieldErrors(details interface{}) []FieldError {
+	list, ok := details.([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]FieldError, 0, len(list))
+	for _, row := range list {
+		obj, ok := row.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		field, fieldOk := obj["field"].(string)
+		msg, msgOk := obj["message"].(string)
+		if fieldOk && msgOk {
+			out = append(out, FieldError{Field: field, Message: msg})
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

@@ -11,6 +11,34 @@ use crate::models::{ListOrdersResponse, PaymentOrder, RateQuoteResponse, SenderS
 
 const TERMINAL_STATUSES: &[&str] = &["settled", "refunded", "expired", "cancelled"];
 
+/// Options for create-order calls.
+#[derive(Default, Clone, Debug)]
+pub struct CreateOrderOptions {
+    /// Overrides the auto-generated UUID sent as the `Idempotency-Key`
+    /// header. Use this to make retries across process boundaries share
+    /// the same dedup key.
+    pub idempotency_key: Option<String>,
+}
+
+fn ensure_reference(payload: Value) -> Value {
+    let has_ref = payload
+        .get("reference")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    if has_ref {
+        return payload;
+    }
+    let mut prepared = payload;
+    if let Some(obj) = prepared.as_object_mut() {
+        obj.insert(
+            "reference".to_string(),
+            Value::String(uuid::Uuid::new_v4().to_string()),
+        );
+    }
+    prepared
+}
+
 /// Target status(es) for [`SenderClient::wait_for_status`].
 #[derive(Clone, Copy, Debug)]
 pub enum WaitStatusTarget<'a> {
@@ -108,6 +136,15 @@ impl SenderClient {
         &self,
         payload: Value,
     ) -> Result<PaymentOrder, PaycrestError> {
+        self.create_offramp_order_with_opts(payload, CreateOrderOptions::default()).await
+    }
+
+    /// Options-carrying variant of [`SenderClient::create_offramp_order`].
+    pub async fn create_offramp_order_with_opts(
+        &self,
+        payload: Value,
+        opts: CreateOrderOptions,
+    ) -> Result<PaymentOrder, PaycrestError> {
         let network = self.read(&payload, &["source", "network"]);
         let token = self.read(&payload, &["source", "currency"]);
         let amount = self.read(&payload, &["amount"]);
@@ -115,10 +152,17 @@ impl SenderClient {
         let prepared = self
             .with_resolved_rate(payload, rate_input(network, token, amount, fiat, "sell"))
             .await?;
+        let prepared = ensure_reference(prepared);
 
         let response = self
             .http
-            .request(Method::POST, "/sender/orders", None, Some(prepared))
+            .request_with_idempotency(
+                Method::POST,
+                "/sender/orders",
+                None,
+                Some(prepared),
+                opts.idempotency_key,
+            )
             .await?;
         Ok(response.data)
     }
@@ -175,6 +219,15 @@ impl SenderClient {
     }
 
     pub async fn create_onramp_order(&self, payload: Value) -> Result<PaymentOrder, PaycrestError> {
+        self.create_onramp_order_with_opts(payload, CreateOrderOptions::default()).await
+    }
+
+    /// Options-carrying variant of [`SenderClient::create_onramp_order`].
+    pub async fn create_onramp_order_with_opts(
+        &self,
+        payload: Value,
+        opts: CreateOrderOptions,
+    ) -> Result<PaymentOrder, PaycrestError> {
         let network = self.read(&payload, &["destination", "recipient", "network"]);
         let token = self.read(&payload, &["destination", "currency"]);
         let amount = self.read(&payload, &["amount"]);
@@ -182,12 +235,45 @@ impl SenderClient {
         let prepared = self
             .with_resolved_rate(payload, rate_input(network, token, amount, fiat, "buy"))
             .await?;
+        let prepared = ensure_reference(prepared);
 
         let response = self
             .http
-            .request(Method::POST, "/sender/orders", None, Some(prepared))
+            .request_with_idempotency(
+                Method::POST,
+                "/sender/orders",
+                None,
+                Some(prepared),
+                opts.idempotency_key,
+            )
             .await?;
         Ok(response.data)
+    }
+
+    /// Collect every page of sender orders into a single `Vec`. Calls
+    /// `list_orders` repeatedly with incrementing `page` until the
+    /// response comes back empty or the cumulative count reaches the
+    /// server-reported `total`. Caller is responsible for bounded
+    /// memory if the dataset is large.
+    pub async fn list_all_orders(
+        &self,
+        page_size: i64,
+        status: Option<&str>,
+    ) -> Result<Vec<PaymentOrder>, PaycrestError> {
+        let mut out: Vec<PaymentOrder> = Vec::new();
+        let mut page = 1i64;
+        let effective_page_size = if page_size <= 0 { 50 } else { page_size };
+        loop {
+            let response = self.list_orders(page, effective_page_size, status).await?;
+            if response.orders.is_empty() {
+                return Ok(out);
+            }
+            out.extend(response.orders);
+            if response.total > 0 && (out.len() as i64) >= response.total {
+                return Ok(out);
+            }
+            page += 1;
+        }
     }
 
     pub async fn list_orders(

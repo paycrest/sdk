@@ -1,7 +1,7 @@
 from typing import Optional
 
 from .gateway_client import GatewayClient, GatewayPathConfig
-from .http import HttpClient
+from .http import HttpClient, RequestHooks
 from .provider import ProviderClient
 from .registry import AggregatorRegistry
 from .sender import SenderClient
@@ -16,11 +16,12 @@ class PaycrestClient:
         base_url: str = "https://api.paycrest.io/v2",
         timeout: int = 20,
         gateway: Optional[GatewayPathConfig] = None,
+        hooks: Optional[RequestHooks] = None,
     ):
         sender_key = sender_api_key or api_key
         provider_key = provider_api_key or api_key
 
-        self._public_http = HttpClient(api_key="", base_url=base_url, timeout=timeout)
+        self._public_http = HttpClient(api_key="", base_url=base_url, timeout=timeout, hooks=hooks)
         override = gateway.aggregator_public_key if gateway else None
         self._registry = AggregatorRegistry(self._public_http, public_key_override=override)
         self._gateway_client = (
@@ -28,10 +29,10 @@ class PaycrestClient:
         )
 
         self._sender_http = (
-            HttpClient(api_key=sender_key, base_url=base_url, timeout=timeout) if sender_key else None
+            HttpClient(api_key=sender_key, base_url=base_url, timeout=timeout, hooks=hooks) if sender_key else None
         )
         self._provider_http = (
-            HttpClient(api_key=provider_key, base_url=base_url, timeout=timeout) if provider_key else None
+            HttpClient(api_key=provider_key, base_url=base_url, timeout=timeout, hooks=hooks) if provider_key else None
         )
 
     def sender(self) -> SenderClient:

@@ -26,8 +26,30 @@ class PaycrestAPIError(Exception):
 
 
 class ValidationError(PaycrestAPIError):
+    """400 Bad Request with optional structured field errors.
+
+    ``field_errors`` is populated when the aggregator returns its
+    conventional ``data: [{field, message}, ...]`` shape. Empty
+    otherwise — callers that only want a message should read
+    ``.args[0]``/``str(error)`` as usual.
+    """
+
     def __init__(self, message: str, details: Any = None) -> None:
         super().__init__(message, status_code=400, details=details)
+        self.field_errors = _parse_field_errors(details)
+
+
+def _parse_field_errors(details: Any) -> list[dict[str, str]]:
+    if not isinstance(details, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in details:
+        if isinstance(item, dict):
+            field = item.get("field")
+            message = item.get("message")
+            if isinstance(field, str) and isinstance(message, str):
+                out.append({"field": field, "message": message})
+    return out
 
 
 class AuthenticationError(PaycrestAPIError):

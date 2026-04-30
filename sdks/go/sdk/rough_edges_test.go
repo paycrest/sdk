@@ -11,6 +11,27 @@ import (
 	"time"
 )
 
+func TestClassifyHTTPErrorPopulatesFieldErrors(t *testing.T) {
+	details := []interface{}{
+		map[string]interface{}{"field": "amount", "message": "required"},
+		map[string]interface{}{"field": "source.currency", "message": "unknown token"},
+		"ignored-string-entry",
+	}
+	err := classifyHTTPError(400, "Validation failed", details, 0)
+	if err.Kind != ErrValidation {
+		t.Fatalf("expected ErrValidation, got %v", err.Kind)
+	}
+	if len(err.FieldErrors) != 2 {
+		t.Fatalf("expected 2 field errors, got %d: %+v", len(err.FieldErrors), err.FieldErrors)
+	}
+	if err.FieldErrors[0].Field != "amount" || err.FieldErrors[0].Message != "required" {
+		t.Fatalf("unexpected first field error: %+v", err.FieldErrors[0])
+	}
+	if err.FieldErrors[1].Field != "source.currency" {
+		t.Fatalf("unexpected second field error: %+v", err.FieldErrors[1])
+	}
+}
+
 func TestClassifyHTTPError(t *testing.T) {
 	cases := []struct {
 		status int
@@ -182,6 +203,103 @@ func TestWaitForStatusTerminalAliasAndTimeout(t *testing.T) {
 	var api *APIError
 	if !errors.As(err, &api) || api.StatusCode != 408 {
 		t.Fatalf("expected 408 timeout, got %v", err)
+	}
+}
+
+func TestHooksObserveRequestsAndErrors(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := atomic.AddInt32(&calls, 1)
+		if count == 1 {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": "success",
+				"data":   map[string]interface{}{"totalOrders": 7},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"message": "nope"})
+	}))
+	defer srv.Close()
+
+	var events []string
+	client := NewClientWithOptions(ClientOptions{
+		SenderAPIKey: "k",
+		BaseURL:      srv.URL,
+		Hooks: RequestHooks{
+			OnRequest:  func(ctx HookContext) { events = append(events, "req:"+ctx.Method) },
+			OnResponse: func(ctx HookContext) { events = append(events, "res:200") },
+			OnError:    func(ctx HookContext) { events = append(events, "err") },
+		},
+	})
+	sender, _ := client.Sender()
+	if _, err := sender.GetStats(context.Background()); err != nil {
+		t.Fatalf("first call failed: %v", err)
+	}
+	if _, err := sender.GetStats(context.Background()); err == nil {
+		t.Fatal("expected second call to fail")
+	}
+	if len(events) < 4 {
+		t.Fatalf("expected at least 4 hook events, got %v", events)
+	}
+	if events[0] != "req:GET" || events[1] != "res:200" {
+		t.Fatalf("unexpected first pair: %v", events[:2])
+	}
+	if events[2] != "req:GET" || events[3] != "err" {
+		t.Fatalf("unexpected second pair: %v", events[2:4])
+	}
+}
+
+func TestForEachOrderWalksPages(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		page := r.URL.Query().Get("page")
+		switch page {
+		case "1":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": "success",
+				"data": map[string]interface{}{
+					"total": 3, "page": 1, "pageSize": 2,
+					"orders": []map[string]interface{}{
+						{"id": "a", "status": "settled"},
+						{"id": "b", "status": "settled"},
+					},
+				},
+			})
+		case "2":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": "success",
+				"data": map[string]interface{}{
+					"total": 3, "page": 2, "pageSize": 2,
+					"orders": []map[string]interface{}{
+						{"id": "c", "status": "refunded"},
+					},
+				},
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": "success",
+				"data": map[string]interface{}{
+					"total": 3, "page": 3, "pageSize": 2, "orders": []map[string]interface{}{},
+				},
+			})
+		}
+	}))
+	defer srv.Close()
+
+	client := NewClientWithOptions(ClientOptions{SenderAPIKey: "k", BaseURL: srv.URL})
+	sender, _ := client.Sender()
+	var ids []string
+	err := sender.ForEachOrder(context.Background(), ListOrdersQuery{PageSize: 2}, func(order PaymentOrder) error {
+		ids = append(ids, order.ID)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ids) != 3 || ids[0] != "a" || ids[2] != "c" {
+		t.Fatalf("unexpected ids: %v", ids)
 	}
 }
 

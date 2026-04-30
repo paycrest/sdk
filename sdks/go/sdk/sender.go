@@ -56,6 +56,20 @@ func (s *SenderService) CreateOrder(ctx context.Context, payload map[string]inte
 // path). Kept for backwards compatibility with existing callers; prefer
 // CreateOfframpOrderWithMethod for new integrations.
 func (s *SenderService) CreateOfframpOrder(ctx context.Context, payload map[string]interface{}) (*PaymentOrder, error) {
+	return s.CreateOfframpOrderWithOpts(ctx, payload, CreateOrderOptions{})
+}
+
+// CreateOrderOptions carries the optional idempotency key for a create
+// call. The zero value is valid — the SDK auto-generates one.
+type CreateOrderOptions struct {
+	// IdempotencyKey overrides the auto-generated UUID that the SDK
+	// attaches as `Idempotency-Key`.
+	IdempotencyKey string
+}
+
+// CreateOfframpOrderWithOpts is the options-carrying variant of
+// CreateOfframpOrder.
+func (s *SenderService) CreateOfframpOrderWithOpts(ctx context.Context, payload map[string]interface{}, opts CreateOrderOptions) (*PaymentOrder, error) {
 	prepared, err := s.withResolvedRate(ctx, payload, rateInput{
 		Network: nestedString(payload, "source", "network"),
 		Token:   nestedString(payload, "source", "currency"),
@@ -66,9 +80,10 @@ func (s *SenderService) CreateOfframpOrder(ctx context.Context, payload map[stri
 	if err != nil {
 		return nil, err
 	}
+	prepared = ensureReference(prepared)
 
 	var response APIResponse[PaymentOrder]
-	if err := s.http.request(ctx, http.MethodPost, "/sender/orders", nil, prepared, &response); err != nil {
+	if err := s.http.requestWithIdempotency(ctx, http.MethodPost, "/sender/orders", nil, prepared, &response, opts.IdempotencyKey); err != nil {
 		return nil, err
 	}
 	return &response.Data, nil
@@ -119,6 +134,12 @@ func (s *SenderService) resolveRateForGateway(ctx context.Context, network, toke
 }
 
 func (s *SenderService) CreateOnrampOrder(ctx context.Context, payload map[string]interface{}) (*PaymentOrder, error) {
+	return s.CreateOnrampOrderWithOpts(ctx, payload, CreateOrderOptions{})
+}
+
+// CreateOnrampOrderWithOpts is the options-carrying variant of
+// CreateOnrampOrder.
+func (s *SenderService) CreateOnrampOrderWithOpts(ctx context.Context, payload map[string]interface{}, opts CreateOrderOptions) (*PaymentOrder, error) {
 	prepared, err := s.withResolvedRate(ctx, payload, rateInput{
 		Network: nestedString(payload, "destination", "recipient", "network"),
 		Token:   nestedString(payload, "destination", "currency"),
@@ -129,12 +150,25 @@ func (s *SenderService) CreateOnrampOrder(ctx context.Context, payload map[strin
 	if err != nil {
 		return nil, err
 	}
+	prepared = ensureReference(prepared)
 
 	var response APIResponse[PaymentOrder]
-	if err := s.http.request(ctx, http.MethodPost, "/sender/orders", nil, prepared, &response); err != nil {
+	if err := s.http.requestWithIdempotency(ctx, http.MethodPost, "/sender/orders", nil, prepared, &response, opts.IdempotencyKey); err != nil {
 		return nil, err
 	}
 	return &response.Data, nil
+}
+
+// ensureReference auto-generates a UUID reference when the caller didn't
+// provide one. Reference is the aggregator's natural dedup lever — keeping
+// it stable across retries lets downstream reconciliation match.
+func ensureReference(payload map[string]interface{}) map[string]interface{} {
+	if ref, ok := payload["reference"].(string); ok && ref != "" {
+		return payload
+	}
+	cloned := cloneMap(payload)
+	cloned["reference"] = generateUUID()
+	return cloned
 }
 
 // ListOrders lists sender orders using untyped parameters. Kept for
@@ -164,6 +198,52 @@ func (s *SenderService) ListOrdersQuery(ctx context.Context, q ListOrdersQuery) 
 		return nil, err
 	}
 	return &response.Data, nil
+}
+
+// ForEachOrder walks every page of sender orders and invokes `fn` on
+// each. Return a non-nil error from `fn` to stop iteration early. The
+// iteration stops automatically when a page returns empty or the
+// server-reported total has been reached.
+func (s *SenderService) ForEachOrder(ctx context.Context, query ListOrdersQuery, fn func(order PaymentOrder) error) error {
+	pageSize := query.PageSize
+	if pageSize == 0 {
+		pageSize = 50
+	}
+	page := query.Page
+	if page == 0 {
+		page = 1
+	}
+	yielded := 0
+	for {
+		response, err := s.ListOrdersQuery(ctx, ListOrdersQuery{Page: page, PageSize: pageSize, Status: query.Status})
+		if err != nil {
+			return err
+		}
+		if len(response.Orders) == 0 {
+			return nil
+		}
+		for _, order := range response.Orders {
+			yielded++
+			if err := fn(order); err != nil {
+				return err
+			}
+		}
+		if response.Total > 0 && yielded >= response.Total {
+			return nil
+		}
+		page++
+	}
+}
+
+// ListAllOrders collects every page into a single slice. Prefer
+// ForEachOrder when streaming is acceptable.
+func (s *SenderService) ListAllOrders(ctx context.Context, query ListOrdersQuery) ([]PaymentOrder, error) {
+	out := make([]PaymentOrder, 0)
+	err := s.ForEachOrder(ctx, query, func(order PaymentOrder) error {
+		out = append(out, order)
+		return nil
+	})
+	return out, err
 }
 
 // WaitForStatus polls GetOrder until the order reaches target or the

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Iterable, Optional
 
 
 @dataclass(frozen=True)
@@ -13,6 +13,36 @@ class SupportedToken:
     decimals: int
     base_currency: str
     network: str
+
+
+# Process-level static token registry. Populate with `register_token`
+# at startup to skip the `/v2/tokens` round-trip for hot tokens
+# (e.g. USDT on base). Lookup order in AggregatorRegistry.get_token:
+# static registry -> cached `/tokens` fetch -> live `/tokens` fetch.
+_STATIC_TOKENS: dict[str, SupportedToken] = {}
+
+
+def _key(network: str, symbol: str) -> str:
+    return f"{network.lower()}::{symbol.upper()}"
+
+
+def register_token(token: SupportedToken) -> None:
+    """Register a token statically so the gateway path resolves it
+    without hitting `/v2/tokens`."""
+    _STATIC_TOKENS[_key(token.network, token.symbol)] = token
+
+
+def register_tokens(tokens: Iterable[SupportedToken]) -> None:
+    for t in tokens:
+        register_token(t)
+
+
+def list_registered_tokens() -> list[SupportedToken]:
+    return list(_STATIC_TOKENS.values())
+
+
+def clear_registered_tokens() -> None:
+    _STATIC_TOKENS.clear()
 
 
 class AggregatorRegistry:
@@ -54,6 +84,12 @@ class AggregatorRegistry:
         return tokens
 
     def get_token(self, network: str, symbol: str) -> SupportedToken:
+        # 1) Static registry (zero-RTT for hot tokens).
+        static_hit = _STATIC_TOKENS.get(_key(network, symbol))
+        if static_hit is not None:
+            return static_hit
+
+        # 2) Live fetch (with in-memory cache).
         tokens = self.get_tokens_for_network(network)
         want = symbol.upper()
         for token in tokens:
@@ -63,3 +99,7 @@ class AggregatorRegistry:
         raise ValueError(
             f'Token "{symbol}" is not enabled on network "{network}". Known: {known}'
         )
+
+    def preload(self, network: str) -> list[SupportedToken]:
+        """Pre-warm the in-memory cache for a network."""
+        return self.get_tokens_for_network(network)

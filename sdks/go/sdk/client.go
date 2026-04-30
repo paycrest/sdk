@@ -3,10 +3,12 @@ package sdk
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
-	"math/rand"
+	mrand "math/rand"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -32,6 +34,34 @@ var DefaultRetryPolicy = RetryPolicy{
 	MaxDelay:  10 * time.Second,
 }
 
+// HookContext is the shape handed to every observation hook.
+type HookContext struct {
+	Method         string
+	URL            string
+	Attempt        int
+	IdempotencyKey string
+	StatusCode     int
+	Duration       time.Duration
+	Err            error
+}
+
+// RequestHooks lets integrators plug in structured logging, metrics,
+// or OpenTelemetry tracing. Each hook is passive — panics are recovered
+// so a faulty tracer can't break SDK semantics.
+type RequestHooks struct {
+	OnRequest  func(ctx HookContext)
+	OnResponse func(ctx HookContext)
+	OnError    func(ctx HookContext)
+}
+
+func (h RequestHooks) fire(cb func(ctx HookContext), ctx HookContext) {
+	if cb == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	cb(ctx)
+}
+
 var retryableStatusCodes = map[int]struct{}{
 	408: {}, 429: {}, 500: {}, 502: {}, 503: {}, 504: {},
 }
@@ -53,6 +83,9 @@ type ClientOptions struct {
 	// RetryPolicy overrides the default retry behaviour. Zero value
 	// means "use DefaultRetryPolicy".
 	RetryPolicy RetryPolicy
+	// Hooks lets integrators observe every request / response / error
+	// without forking. Nil-value hook fields are ignored.
+	Hooks RequestHooks
 	// Gateway is required only when CreateOfframpOrder is invoked with
 	// OfframpMethodGateway. Leave nil for API-only integrations.
 	Gateway *GatewayPathConfig
@@ -63,6 +96,7 @@ type httpClientConfig struct {
 	baseURL     string
 	httpClient  *http.Client
 	retryPolicy RetryPolicy
+	hooks       RequestHooks
 }
 
 func NewClient(apiKey, baseURL string) *Client {
@@ -96,7 +130,7 @@ func NewClientWithOptions(options ClientOptions) *Client {
 	}
 
 	client := &Client{}
-	client.publicHTTP = newHTTPConfig("", baseURL, timeout, retryPolicy)
+	client.publicHTTP = newHTTPConfig("", baseURL, timeout, retryPolicy, options.Hooks)
 
 	override := ""
 	if options.Gateway != nil {
@@ -112,16 +146,16 @@ func NewClientWithOptions(options ClientOptions) *Client {
 	}
 
 	if senderKey != "" {
-		client.senderHTTP = newHTTPConfig(senderKey, baseURL, timeout, retryPolicy)
+		client.senderHTTP = newHTTPConfig(senderKey, baseURL, timeout, retryPolicy, options.Hooks)
 	}
 	if providerKey != "" {
-		client.providerHTTP = newHTTPConfig(providerKey, baseURL, timeout, retryPolicy)
+		client.providerHTTP = newHTTPConfig(providerKey, baseURL, timeout, retryPolicy, options.Hooks)
 	}
 
 	return client
 }
 
-func newHTTPConfig(apiKey, baseURL string, timeout time.Duration, retry RetryPolicy) *httpClientConfig {
+func newHTTPConfig(apiKey, baseURL string, timeout time.Duration, retry RetryPolicy, hooks RequestHooks) *httpClientConfig {
 	return &httpClientConfig{
 		apiKey:  apiKey,
 		baseURL: baseURL,
@@ -129,6 +163,7 @@ func newHTTPConfig(apiKey, baseURL string, timeout time.Duration, retry RetryPol
 			Timeout: timeout,
 		},
 		retryPolicy: retry,
+		hooks:       hooks,
 	}
 }
 
@@ -147,6 +182,14 @@ func (c *Client) Provider() (*ProviderService, error) {
 }
 
 func (c *httpClientConfig) request(ctx context.Context, method, path string, query map[string]string, body interface{}, out interface{}) error {
+	return c.requestWithIdempotency(ctx, method, path, query, body, out, "")
+}
+
+// requestWithIdempotency is the internal form that allows callers (POST
+// sites) to thread an Idempotency-Key through the retry loop. When
+// idempotencyKey is empty and method == POST, a UUID is generated so
+// retries stay linked.
+func (c *httpClientConfig) requestWithIdempotency(ctx context.Context, method, path string, query map[string]string, body interface{}, out interface{}, idempotencyKey string) error {
 	endpoint, err := url.Parse(c.baseURL + path)
 	if err != nil {
 		return err
@@ -165,12 +208,33 @@ func (c *httpClientConfig) request(ctx context.Context, method, path string, que
 		policy = DefaultRetryPolicy
 	}
 
+	effectiveKey := idempotencyKey
+	if effectiveKey == "" && method == http.MethodPost {
+		effectiveKey = generateUUID()
+	}
+
 	var lastErr error
 	for attempt := 1; attempt <= policy.Retries; attempt++ {
-		err := c.sendOnce(ctx, method, endpoint.String(), body, out)
+		hookCtx := HookContext{
+			Method:         method,
+			URL:            endpoint.String(),
+			Attempt:        attempt,
+			IdempotencyKey: effectiveKey,
+		}
+		c.hooks.fire(c.hooks.OnRequest, hookCtx)
+		startedAt := time.Now()
+		err := c.sendOnce(ctx, method, endpoint.String(), body, out, effectiveKey)
+		hookCtx.Duration = time.Since(startedAt)
 		if err == nil {
+			hookCtx.StatusCode = 200
+			c.hooks.fire(c.hooks.OnResponse, hookCtx)
 			return nil
 		}
+		hookCtx.Err = err
+		if apiErr, ok := err.(*APIError); ok {
+			hookCtx.StatusCode = apiErr.StatusCode
+		}
+		c.hooks.fire(c.hooks.OnError, hookCtx)
 		lastErr = err
 		if attempt >= policy.Retries {
 			break
@@ -188,7 +252,7 @@ func (c *httpClientConfig) request(ctx context.Context, method, path string, que
 	return lastErr
 }
 
-func (c *httpClientConfig) sendOnce(ctx context.Context, method, endpoint string, body interface{}, out interface{}) error {
+func (c *httpClientConfig) sendOnce(ctx context.Context, method, endpoint string, body interface{}, out interface{}, idempotencyKey string) error {
 	var reader io.Reader
 	if body != nil {
 		payload, err := json.Marshal(body)
@@ -204,6 +268,9 @@ func (c *httpClientConfig) sendOnce(ctx context.Context, method, endpoint string
 	}
 	if c.apiKey != "" {
 		req.Header.Set("API-Key", c.apiKey)
+	}
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -267,9 +334,24 @@ func computeBackoff(attempt int, err error, policy RetryPolicy) time.Duration {
 		return wait
 	}
 	exponent := time.Duration(1<<uint(attempt-1)) * policy.BaseDelay
-	jittered := time.Duration(rand.Int63n(int64(exponent) + 1))
+	jittered := time.Duration(mrand.Int63n(int64(exponent) + 1))
 	if jittered > policy.MaxDelay {
 		return policy.MaxDelay
 	}
 	return jittered
+}
+
+// generateUUID produces a UUIDv4 string suitable for Idempotency-Key
+// headers. Crypto/rand is used so two processes never collide.
+func generateUUID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand should never fail in practice; fall back to a
+		// timestamp-based token so POSTs still carry *some* key.
+		return "00000000-0000-0000-0000-000000000000"
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant RFC 4122
+	hex32 := hex.EncodeToString(b[:])
+	return hex32[0:8] + "-" + hex32[8:12] + "-" + hex32[12:16] + "-" + hex32[16:20] + "-" + hex32[20:32]
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Iterable, Optional, Sequence, Union
 
@@ -53,7 +54,13 @@ class SenderClient:
             "Invalid sender order direction. Expected crypto->fiat or fiat->crypto.",
         )
 
-    def create_offramp_order(self, payload: dict, method: str = "api"):
+    def create_offramp_order(
+        self,
+        payload: dict,
+        method: str = "api",
+        *,
+        idempotency_key: Optional[str] = None,
+    ):
         """Create an off-ramp order.
 
         Args:
@@ -75,15 +82,22 @@ class SenderClient:
         if method != "api":
             raise ValidationError(f'Unknown off-ramp method "{method}"')
 
-        payload = self._resolve_rate_if_missing(
-            payload,
-            network=payload["source"]["network"],
-            token=payload["source"]["currency"],
-            amount=payload["amount"],
-            fiat=payload["destination"]["currency"],
-            side="sell",
+        payload = _ensure_reference(
+            self._resolve_rate_if_missing(
+                payload,
+                network=payload["source"]["network"],
+                token=payload["source"]["currency"],
+                amount=payload["amount"],
+                fiat=payload["destination"]["currency"],
+                side="sell",
+            )
         )
-        response = self._http.call("POST", "/sender/orders", body=payload)
+        response = self._http.call(
+            "POST",
+            "/sender/orders",
+            body=payload,
+            idempotency_key=idempotency_key,
+        )
         return response["data"]
 
     def _resolve_rate_for_gateway(self, network: str, token: str, amount: str, fiat: str) -> str:
@@ -101,17 +115,78 @@ class SenderClient:
             raise RateQuoteUnavailableError("Aggregator returned no sell-side rate", details=data)
         return rate
 
-    def create_onramp_order(self, payload: dict) -> dict:
-        payload = self._resolve_rate_if_missing(
-            payload,
-            network=payload["destination"]["recipient"]["network"],
-            token=payload["destination"]["currency"],
-            amount=payload["amount"],
-            fiat=payload["source"]["currency"],
-            side="buy",
+    def create_onramp_order(
+        self,
+        payload: dict,
+        *,
+        idempotency_key: Optional[str] = None,
+    ) -> dict:
+        payload = _ensure_reference(
+            self._resolve_rate_if_missing(
+                payload,
+                network=payload["destination"]["recipient"]["network"],
+                token=payload["destination"]["currency"],
+                amount=payload["amount"],
+                fiat=payload["source"]["currency"],
+                side="buy",
+            )
         )
-        response = self._http.call("POST", "/sender/orders", body=payload)
+        response = self._http.call(
+            "POST",
+            "/sender/orders",
+            body=payload,
+            idempotency_key=idempotency_key,
+        )
         return response["data"]
+
+    def iterate_orders(
+        self,
+        query: Optional[ListOrdersQuery] = None,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        status: Optional[str] = None,
+    ):
+        """Generator that yields one order at a time across all pages.
+
+        Example::
+
+            for order in sender.iterate_orders(ListOrdersQuery(status="settled")):
+                process(order)
+        """
+        if query is None:
+            query = ListOrdersQuery(page=page, page_size=page_size, status=status)
+        current_page = query.page or 1
+        yielded = 0
+        while True:
+            response = self.list_orders(
+                ListOrdersQuery(page=current_page, page_size=query.page_size, status=query.status)
+            )
+            orders = response.get("orders") or []
+            if not orders:
+                return
+            for order in orders:
+                yielded += 1
+                yield order
+            total = int(response.get("total") or 0)
+            if total > 0 and yielded >= total:
+                return
+            current_page += 1
+
+    def list_all_orders(
+        self,
+        query: Optional[ListOrdersQuery] = None,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        status: Optional[str] = None,
+    ) -> list[dict]:
+        """Collect every page into a single list. Prefer
+        :meth:`iterate_orders` when streaming is acceptable.
+        """
+        return list(
+            self.iterate_orders(query, page=page, page_size=page_size, status=status)
+        )
 
     def list_orders(
         self,
@@ -221,6 +296,21 @@ class SenderClient:
         prepared = dict(payload)
         prepared["rate"] = side_quote["rate"]
         return prepared
+
+
+def _ensure_reference(payload: dict) -> dict:
+    """Auto-generate a reference when the caller didn't supply one.
+
+    Reference is the aggregator's natural dedup lever today; keeping it
+    stable across retries of the same logical request lets downstream
+    reconciliation match even if the first POST's response was lost.
+    """
+    ref = payload.get("reference")
+    if isinstance(ref, str) and ref:
+        return payload
+    prepared = dict(payload)
+    prepared["reference"] = str(uuid.uuid4())
+    return prepared
 
 
 def _matches_target(status: Optional[str], target: WaitStatusTarget) -> bool:

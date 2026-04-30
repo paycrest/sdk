@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   PaycrestApiError,
   RateQuoteUnavailableError,
@@ -8,6 +10,7 @@ import { HttpClient } from "./http.js";
 import {
   CreateOfframpOrderOptions,
   CreateOfframpOrderRequest,
+  CreateOnrampOrderOptions,
   CreateOnrampOrderRequest,
   CreateOrderRequest,
   GatewayOrderResult,
@@ -92,37 +95,92 @@ export class SenderClient {
       return this.gatewayClient.createOfframpOrder(payload);
     }
 
-    const preparedPayload = await this.withResolvedRate(payload, {
-      network: payload.source.network,
-      token: payload.source.currency,
-      amount: payload.amount,
-      fiat: payload.destination.currency,
-      side: "sell",
-    });
+    const preparedPayload = ensureReference(
+      await this.withResolvedRate(payload, {
+        network: payload.source.network,
+        token: payload.source.currency,
+        amount: payload.amount,
+        fiat: payload.destination.currency,
+        side: "sell",
+      }),
+    );
 
     const response = await this.http.request<PaymentOrder>({
       method: "POST",
       path: "/sender/orders",
       body: preparedPayload,
+      idempotencyKey: options?.idempotencyKey,
     });
     return response.data;
   }
 
-  public async createOnrampOrder(payload: CreateOnrampOrderRequest): Promise<PaymentOrder> {
-    const preparedPayload = await this.withResolvedRate(payload, {
-      network: payload.destination.recipient.network,
-      token: payload.destination.currency,
-      amount: payload.amount,
-      fiat: payload.source.currency,
-      side: "buy",
-    });
+  public async createOnrampOrder(
+    payload: CreateOnrampOrderRequest,
+    options?: CreateOnrampOrderOptions,
+  ): Promise<PaymentOrder> {
+    const preparedPayload = ensureReference(
+      await this.withResolvedRate(payload, {
+        network: payload.destination.recipient.network,
+        token: payload.destination.currency,
+        amount: payload.amount,
+        fiat: payload.source.currency,
+        side: "buy",
+      }),
+    );
 
     const response = await this.http.request<PaymentOrder>({
       method: "POST",
       path: "/sender/orders",
       body: preparedPayload,
+      idempotencyKey: options?.idempotencyKey,
     });
     return response.data;
+  }
+
+  /**
+   * Async generator that yields each order across every page. Use
+   * instead of manual page-walking loops.
+   *
+   * ```ts
+   * for await (const order of client.sender().iterateOrders({ status: "settled" })) {
+   *   // process each one
+   * }
+   * ```
+   *
+   * Stops automatically when the current page comes back empty or when
+   * the cumulative yielded count reaches the server-reported `total`.
+   * Override the starting page with `query.page` (defaults to 1).
+   */
+  public async *iterateOrders(query: ListOrdersQuery = {}): AsyncGenerator<PaymentOrder> {
+    const pageSize = query.pageSize ?? 50;
+    let page = query.page ?? 1;
+    let yielded = 0;
+    while (true) {
+      const response = await this.listOrders({ ...query, page, pageSize });
+      if (!response.orders?.length) {
+        return;
+      }
+      for (const order of response.orders) {
+        yielded += 1;
+        yield order;
+      }
+      if (response.total > 0 && yielded >= response.total) {
+        return;
+      }
+      page += 1;
+    }
+  }
+
+  /**
+   * Convenience wrapper that collects all pages into an array. Use
+   * `iterateOrders` for streaming / memory-sensitive workloads.
+   */
+  public async listAllOrders(query: ListOrdersQuery = {}): Promise<PaymentOrder[]> {
+    const out: PaymentOrder[] = [];
+    for await (const order of this.iterateOrders(query)) {
+      out.push(order);
+    }
+    return out;
   }
 
   public async listOrders(query: ListOrdersQuery = {}): Promise<ListOrdersResponse> {
@@ -228,23 +286,74 @@ export class SenderClient {
     const pollMs = opts.pollMs ?? 3_000;
     const timeoutMs = opts.timeoutMs ?? 5 * 60 * 1000;
     const deadline = Date.now() + timeoutMs;
+    const signal = opts.signal;
 
     let last: PaymentOrder | undefined;
     while (true) {
-      last = await this.getOrder(orderId);
-      if (matchesTarget(last.status, target)) return last;
+      if (signal?.aborted) {
+        throw new PaycrestApiError(
+          `waitForStatus aborted by caller; last status=${last?.status ?? "unknown"}`,
+          499,
+          last ?? undefined,
+        );
+      }
+      const response = await this.http.request<PaymentOrder>({
+        method: "GET",
+        path: `/sender/orders/${orderId}`,
+        signal,
+      });
+      const current: PaymentOrder = response.data;
+      last = current;
+      if (matchesTarget(current.status, target)) return current;
 
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
         throw new PaycrestApiError(
-          `Timed out waiting for order ${orderId} to reach ${describeTarget(target)}; last status=${last.status}`,
+          `Timed out waiting for order ${orderId} to reach ${describeTarget(target)}; last status=${current.status}`,
           408,
-          last,
+          current,
         );
       }
-      await new Promise((r) => setTimeout(r, Math.min(pollMs, remaining)));
+      await sleepOrAbort(Math.min(pollMs, remaining), signal);
     }
   }
+}
+
+/**
+ * Auto-generate a reference on order payloads when the caller didn't
+ * provide one. Keeping reference stable is the current dedup lever
+ * users have — if a POST fails ambiguously, resubmitting with the same
+ * reference lets the aggregator's bookkeeping match.
+ */
+/**
+ * setTimeout-based sleep that unwinds early when the signal aborts.
+ * Rejects with a PaycrestApiError so callers can distinguish timeouts
+ * from aborts in a single catch block.
+ */
+function sleepOrAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new PaycrestApiError("waitForStatus aborted by caller", 499));
+    };
+    if (signal?.aborted) {
+      clearTimeout(timer);
+      reject(new PaycrestApiError("waitForStatus aborted by caller", 499));
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function ensureReference<T extends { reference?: string }>(payload: T): T {
+  if (payload.reference && payload.reference.length > 0) {
+    return payload;
+  }
+  return { ...payload, reference: randomUUID() };
 }
 
 function matchesTarget(status: OrderStatus, target: WaitStatusTarget): boolean {

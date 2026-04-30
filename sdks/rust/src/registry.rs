@@ -1,16 +1,12 @@
 //! In-memory cache for aggregator public key + token catalogue.
 
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 
 use crate::client::HttpContext;
 use crate::error::PaycrestError;
-
-// HttpContext is pub(crate); AggregatorRegistry::new is therefore also
-// internal (constructed by PaycrestClient). Expose it only to the
-// crate.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupportedToken {
@@ -21,6 +17,54 @@ pub struct SupportedToken {
     #[serde(rename = "baseCurrency")]
     pub base_currency: String,
     pub network: String,
+}
+
+fn static_tokens() -> &'static RwLock<HashMap<String, SupportedToken>> {
+    static INSTANCE: OnceLock<RwLock<HashMap<String, SupportedToken>>> = OnceLock::new();
+    INSTANCE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn static_token_key(network: &str, symbol: &str) -> String {
+    format!("{}::{}", network.to_lowercase(), symbol.to_uppercase())
+}
+
+/// Register a token statically so the gateway path resolves it without
+/// hitting `/v2/tokens`.
+pub fn register_token(token: SupportedToken) {
+    if let Ok(mut guard) = static_tokens().write() {
+        guard.insert(static_token_key(&token.network, &token.symbol), token);
+    }
+}
+
+/// Bulk-register a list of tokens.
+pub fn register_tokens(tokens: impl IntoIterator<Item = SupportedToken>) {
+    if let Ok(mut guard) = static_tokens().write() {
+        for t in tokens {
+            guard.insert(static_token_key(&t.network, &t.symbol), t);
+        }
+    }
+}
+
+/// Snapshot of the static registry — handy for tests + audits.
+pub fn list_registered_tokens() -> Vec<SupportedToken> {
+    static_tokens()
+        .read()
+        .map(|g| g.values().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// Drop all entries from the static registry. Test-only escape hatch.
+pub fn clear_registered_tokens() {
+    if let Ok(mut guard) = static_tokens().write() {
+        guard.clear();
+    }
+}
+
+fn static_token_lookup(network: &str, symbol: &str) -> Option<SupportedToken> {
+    static_tokens()
+        .read()
+        .ok()
+        .and_then(|g| g.get(&static_token_key(network, symbol)).cloned())
 }
 
 pub struct AggregatorRegistry {
@@ -94,6 +138,12 @@ impl AggregatorRegistry {
         network: &str,
         symbol: &str,
     ) -> Result<SupportedToken, PaycrestError> {
+        // 1) Static registry — zero-RTT for hot tokens.
+        if let Some(t) = static_token_lookup(network, symbol) {
+            return Ok(t);
+        }
+
+        // 2) Live fetch (with in-memory cache).
         let tokens = self.get_tokens_for_network(network).await?;
         let want = symbol.to_uppercase();
         tokens
@@ -106,5 +156,10 @@ impl AggregatorRegistry {
                     None,
                 )
             })
+    }
+
+    /// Pre-warm the in-memory cache for a network.
+    pub async fn preload(&self, network: &str) -> Result<Vec<SupportedToken>, PaycrestError> {
+        self.get_tokens_for_network(network).await
     }
 }
