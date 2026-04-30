@@ -21,13 +21,14 @@ class PaycrestClient
         int $timeout = 20,
         ?GatewayTransactor $gatewayTransactor = null,
         ?string $aggregatorPublicKeyOverride = null,
+        ?RequestHooks $hooks = null,
     ) {
         $resolvedSenderKey = $senderApiKey ?: $apiKey;
         $resolvedProviderKey = $providerApiKey ?: $apiKey;
 
-        $this->senderHttp = $resolvedSenderKey ? new HttpClient($resolvedSenderKey, $baseUrl, $timeout) : null;
-        $this->providerHttp = $resolvedProviderKey ? new HttpClient($resolvedProviderKey, $baseUrl, $timeout) : null;
-        $this->publicHttp = new HttpClient('', $baseUrl, $timeout);
+        $this->senderHttp = $resolvedSenderKey ? new HttpClient($resolvedSenderKey, $baseUrl, $timeout, null, $hooks) : null;
+        $this->providerHttp = $resolvedProviderKey ? new HttpClient($resolvedProviderKey, $baseUrl, $timeout, null, $hooks) : null;
+        $this->publicHttp = new HttpClient('', $baseUrl, $timeout, null, $hooks);
         $this->gatewayClient = $gatewayTransactor
             ? new GatewayClient($this->publicHttp, $gatewayTransactor, $aggregatorPublicKeyOverride)
             : null;

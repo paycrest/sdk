@@ -15,6 +15,19 @@ use Paycrest\SDK\Queries\ListOrdersQuery;
 use Paycrest\SDK\Queries\WaitForStatusOptions;
 use Paycrest\SDK\Tests\Support\MockHttpClient;
 
+it('lifts field errors out of a 400 validation response', function (): void {
+    $err = new ValidationError('Validation failed', [
+        ['field' => 'amount', 'message' => 'required'],
+        ['field' => 'source.currency', 'message' => 'unknown token'],
+        'noise-entry',
+    ]);
+
+    expect($err->fieldErrors)->toHaveCount(2);
+    expect($err->fieldErrors[0]->field)->toBe('amount');
+    expect($err->fieldErrors[0]->message)->toBe('required');
+    expect($err->fieldErrors[1]->field)->toBe('source.currency');
+});
+
 it('classifies HTTP errors into typed subclasses', function (): void {
     expect(ErrorClassifier::classifyHttpError(400, 'bad'))->toBeInstanceOf(ValidationError::class);
     expect(ErrorClassifier::classifyHttpError(401, 'bad'))->toBeInstanceOf(AuthenticationError::class);
@@ -76,6 +89,25 @@ it('waitForStatus accepts the terminal alias and times out when stuck', function
     $stuckSender = new SenderClient($stuck->client());
     expect(fn () => $stuckSender->waitForStatus('ord', 'settled', new WaitForStatusOptions(pollMs: 1, timeoutMs: 5)))
         ->toThrow(PaycrestApiError::class);
+});
+
+it('iterateOrders walks pages until empty', function (): void {
+    $http = new MockHttpClient([
+        ['status' => 'success', 'data' => [
+            'total' => 3, 'page' => 1, 'pageSize' => 2,
+            'orders' => [['id' => 'a'], ['id' => 'b']],
+        ]],
+        ['status' => 'success', 'data' => [
+            'total' => 3, 'page' => 2, 'pageSize' => 2,
+            'orders' => [['id' => 'c']],
+        ]],
+    ]);
+    $sender = new SenderClient($http->client());
+    $collected = [];
+    foreach ($sender->iterateOrders(new ListOrdersQuery(pageSize: 2)) as $order) {
+        $collected[] = $order['id'];
+    }
+    expect($collected)->toBe(['a', 'b', 'c']);
 });
 
 it('listOrders accepts a ListOrdersQuery value object', function (): void {

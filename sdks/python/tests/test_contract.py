@@ -11,8 +11,14 @@ class MockHTTP:
         self.responses = responses
         self.calls = []
 
-    def call(self, method: str, path: str, body=None, query=None):
-        self.calls.append({"method": method, "path": path, "body": body, "query": query})
+    def call(self, method: str, path: str, body=None, query=None, idempotency_key=None, timeout=None):
+        self.calls.append({
+            "method": method,
+            "path": path,
+            "body": body,
+            "query": query,
+            "idempotency_key": idempotency_key,
+        })
         if not self.responses:
             raise AssertionError("unexpected call")
         next_response = self.responses.pop(0)
@@ -408,6 +414,92 @@ class GatewayContractTests(unittest.TestCase):
 
 
 class RoughEdgesTests(unittest.TestCase):
+    def test_static_token_registry_short_circuits_lookup(self):
+        from paycrest_sdk import (
+            SupportedToken,
+            clear_registered_tokens,
+            list_registered_tokens,
+            register_token,
+        )
+        from paycrest_sdk.registry import AggregatorRegistry
+
+        clear_registered_tokens()
+        register_token(SupportedToken(
+            symbol="USDT",
+            contract_address="0xUSDTbase",
+            decimals=6,
+            base_currency="USD",
+            network="base",
+        ))
+        self.assertEqual(len(list_registered_tokens()), 1)
+
+        # Registry's HTTP client should never be called when the static
+        # entry resolves the token.
+        class ExplosiveHttp:
+            def call(self, *_, **__):
+                raise AssertionError("/tokens fetch must not happen for static hit")
+
+        registry = AggregatorRegistry(ExplosiveHttp(), public_key_override="x")
+        token = registry.get_token("base", "USDT")
+        self.assertEqual(token.contract_address, "0xUSDTbase")
+        clear_registered_tokens()
+
+    def test_request_hooks_fire_per_attempt(self):
+        from paycrest_sdk.http import RequestHooks
+        from paycrest_sdk import PaycrestClient
+
+        events = []
+
+        def on_req(ctx):
+            events.append(("req", ctx.method, ctx.attempt))
+
+        def on_res(ctx):
+            events.append(("res", ctx.status_code))
+
+        def on_err(ctx):
+            events.append(("err", ctx.status_code))
+
+        client = PaycrestClient(
+            sender_api_key="k",
+            hooks=RequestHooks(on_request=on_req, on_response=on_res, on_error=on_err),
+        )
+        # HttpClient is real but its _send is monkey-patchable. Stub it
+        # to simulate one success + one failure without hitting the net.
+        http = client._sender_http
+        call_count = {"n": 0}
+
+        def fake_send(method, url, body, idempotency_key=None, timeout=None):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return {"status": "success", "data": {"totalOrders": 1, "totalOrderVolume": "0", "totalFeeEarnings": "0"}}
+            from paycrest_sdk.errors import AuthenticationError
+            raise AuthenticationError("nope")
+
+        http._send = fake_send
+        client.sender().get_stats()
+        try:
+            client.sender().get_stats()
+        except Exception:
+            pass
+
+        kinds = [e[0] for e in events]
+        self.assertEqual(kinds[:4], ["req", "res", "req", "err"])
+
+    def test_validation_error_carries_field_errors(self):
+        from paycrest_sdk.errors import ValidationError
+
+        err = ValidationError(
+            "Validation failed",
+            details=[
+                {"field": "amount", "message": "required"},
+                {"field": "source.currency", "message": "unknown token"},
+                "noise",  # non-dict entries must be ignored
+            ],
+        )
+        self.assertEqual(len(err.field_errors), 2)
+        self.assertEqual(err.field_errors[0], {"field": "amount", "message": "required"})
+        self.assertEqual(err.field_errors[1]["message"], "unknown token")
+
     def test_typed_error_classification(self):
         from paycrest_sdk.errors import (
             AuthenticationError,

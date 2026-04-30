@@ -46,7 +46,30 @@ pub enum PaycrestError {
     MissingRateQuote,
 }
 
+/// One field-level error as returned by the aggregator's 400 responses.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FieldError {
+    pub field: String,
+    pub message: String,
+}
+
 impl PaycrestError {
+    /// Returns structured field errors when this is a 400 validation
+    /// response that carried the aggregator's conventional
+    /// `[{field, message}, ...]` payload. Empty for any other shape.
+    pub fn field_errors(&self) -> Vec<FieldError> {
+        let details = match self {
+            PaycrestError::Api { details, kind: ErrorKind::Validation, .. } => details,
+            _ => return Vec::new(),
+        };
+        let Some(details) = details.as_ref() else { return Vec::new(); };
+        let Some(array) = details.as_array() else { return Vec::new(); };
+        array
+            .iter()
+            .filter_map(|row| serde_json::from_value::<FieldError>(row.clone()).ok())
+            .collect()
+    }
+
     /// Convenience constructor matching the pre-2.1 `Api` shape so
     /// existing call sites don't churn when they don't care about the
     /// typed kind.

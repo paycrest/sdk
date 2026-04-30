@@ -391,6 +391,32 @@ async fn gateway_missing_configuration_errors() {
 }
 
 #[test]
+fn validation_error_exposes_field_errors() {
+    use crate::error::{ErrorKind, PaycrestError};
+    use serde_json::json;
+
+    let err = PaycrestError::api_with_kind(
+        400,
+        "Validation failed",
+        Some(json!([
+            {"field": "amount", "message": "required"},
+            {"field": "source.currency", "message": "unknown token"},
+            "noise"
+        ])),
+        ErrorKind::Validation,
+    );
+    let fields = err.field_errors();
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fields[0].field, "amount");
+    assert_eq!(fields[0].message, "required");
+    assert_eq!(fields[1].field, "source.currency");
+
+    // Non-validation errors never emit field errors.
+    let auth = PaycrestError::api_with_kind(401, "nope", None, ErrorKind::Authentication);
+    assert!(auth.field_errors().is_empty());
+}
+
+#[test]
 fn error_kind_classification_by_status_code() {
     use crate::error::{classify_kind, ErrorKind, PaycrestError};
 

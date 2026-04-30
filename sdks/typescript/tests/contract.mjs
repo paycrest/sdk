@@ -14,6 +14,7 @@ import {
 import { encryptRecipientPayload, buildRecipientPayload } from "../dist/encryption.js";
 import { toSubunits, scaleRate } from "../dist/gateway-client.js";
 import { getNetwork, registerNetwork } from "../dist/networks.js";
+import { clearRegisteredTokens, listRegisteredTokens, registerToken } from "../dist/registry.js";
 
 function jsonResponse(payload, status = 200, headers = {}) {
   const lower = Object.fromEntries(
@@ -583,6 +584,253 @@ async function testGatewayMethodEndToEnd() {
   assert.equal(plaintext.Memo, "Payout");
 }
 
+async function testValidationErrorCarriesFieldErrors() {
+  const { fetcher } = makeMockFetch([
+    jsonResponse(
+      {
+        status: "error",
+        message: "Validation failed",
+        data: [
+          { field: "amount", message: "required" },
+          { field: "source.currency", message: "unknown token" },
+        ],
+      },
+      400,
+    ),
+  ]);
+  const client = createPaycrestClient({ senderApiKey: "k", fetcher });
+  await assert.rejects(
+    client.sender().getStats(),
+    (err) => {
+      assert.equal(err instanceof ValidationError, true);
+      assert.equal(err.fieldErrors.length, 2);
+      assert.equal(err.fieldErrors[0].field, "amount");
+      assert.equal(err.fieldErrors[1].message, "unknown token");
+      return true;
+    },
+  );
+}
+
+async function testIdempotencyHeaderOnPost() {
+  const { fetcher, calls } = makeMockFetch([
+    jsonResponse({ status: "success", data: { sell: { rate: "1500" } } }),
+    jsonResponse({ status: "success", data: { id: "ord-idem" } }, 201),
+  ]);
+  const client = createPaycrestClient({ senderApiKey: "k", fetcher });
+  await client.sender().createOfframpOrder({
+    amount: "100",
+    source: { type: "crypto", currency: "USDT", network: "base", refundAddress: "0xabc" },
+    destination: {
+      type: "fiat",
+      currency: "NGN",
+      recipient: { institution: "X", accountIdentifier: "1", accountName: "Y", memo: "m" },
+    },
+  });
+  // Rate quote (GET) should NOT have an Idempotency-Key; order POST must.
+  const rateCall = calls[0];
+  const orderCall = calls[1];
+  assert.equal(rateCall.headers["Idempotency-Key"], undefined);
+  assert.ok(orderCall.headers["Idempotency-Key"], "POST missing Idempotency-Key header");
+  assert.match(orderCall.headers["Idempotency-Key"], /[0-9a-f-]{36}/i);
+  // Reference auto-generated too.
+  const body = JSON.parse(orderCall.body);
+  assert.ok(body.reference, "payload missing auto-generated reference");
+  assert.match(body.reference, /[0-9a-f-]{36}/i);
+}
+
+async function testIdempotencyHeaderOverride() {
+  const { fetcher, calls } = makeMockFetch([
+    jsonResponse({ status: "success", data: { sell: { rate: "1500" } } }),
+    jsonResponse({ status: "success", data: { id: "ord-idem2" } }, 201),
+  ]);
+  const client = createPaycrestClient({ senderApiKey: "k", fetcher });
+  await client.sender().createOfframpOrder(
+    {
+      amount: "100",
+      source: { type: "crypto", currency: "USDT", network: "base", refundAddress: "0xabc" },
+      destination: {
+        type: "fiat",
+        currency: "NGN",
+        recipient: { institution: "X", accountIdentifier: "1", accountName: "Y", memo: "m" },
+      },
+    },
+    { idempotencyKey: "caller-supplied-key" },
+  );
+  assert.equal(calls[1].headers["Idempotency-Key"], "caller-supplied-key");
+}
+
+async function testReferencePreservedIfProvided() {
+  const { fetcher, calls } = makeMockFetch([
+    jsonResponse({ status: "success", data: { sell: { rate: "1500" } } }),
+    jsonResponse({ status: "success", data: { id: "ord-ref" } }, 201),
+  ]);
+  const client = createPaycrestClient({ senderApiKey: "k", fetcher });
+  await client.sender().createOfframpOrder({
+    amount: "100",
+    reference: "caller-ref-42",
+    source: { type: "crypto", currency: "USDT", network: "base", refundAddress: "0xabc" },
+    destination: {
+      type: "fiat",
+      currency: "NGN",
+      recipient: { institution: "X", accountIdentifier: "1", accountName: "Y", memo: "m" },
+    },
+  });
+  const body = JSON.parse(calls[1].body);
+  assert.equal(body.reference, "caller-ref-42", "caller reference must be preserved");
+}
+
+async function testIterateOrdersWalksPages() {
+  const fetcher = async (url) => {
+    const u = new URL(String(url));
+    const page = Number(u.searchParams.get("page") || "1");
+    if (page === 1) {
+      return jsonResponse({
+        status: "success",
+        data: {
+          total: 3,
+          page: 1,
+          pageSize: 2,
+          orders: [
+            { id: "a", status: "settled" },
+            { id: "b", status: "settled" },
+          ],
+        },
+      });
+    }
+    if (page === 2) {
+      return jsonResponse({
+        status: "success",
+        data: {
+          total: 3,
+          page: 2,
+          pageSize: 2,
+          orders: [{ id: "c", status: "refunded" }],
+        },
+      });
+    }
+    return jsonResponse({ status: "success", data: { total: 3, page, pageSize: 2, orders: [] } });
+  };
+  const client = createPaycrestClient({ senderApiKey: "k", fetcher });
+  const collected = [];
+  for await (const order of client.sender().iterateOrders({ pageSize: 2 })) {
+    collected.push(order.id);
+  }
+  assert.deepEqual(collected, ["a", "b", "c"]);
+
+  const all = await client.sender().listAllOrders({ pageSize: 2 });
+  assert.equal(all.length, 3);
+}
+
+async function testStaticTokenRegistryShortCircuitsLookup() {
+  clearRegisteredTokens();
+  registerToken({
+    symbol: "USDT",
+    contractAddress: "0xUSDTbase",
+    decimals: 6,
+    baseCurrency: "USD",
+    network: "base",
+  });
+  assert.equal(listRegisteredTokens().length, 1);
+
+  const { publicKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs1", format: "pem" },
+  });
+
+  // /tokens fetch must NOT happen because the static entry resolves first.
+  let tokensFetched = false;
+  const fetcher = async (url) => {
+    if (String(url).includes("/tokens")) tokensFetched = true;
+    if (String(url).includes("/rates/")) {
+      return jsonResponse({ status: "success", data: { sell: { rate: "1500" } } });
+    }
+    if (String(url).includes("/sender/orders")) {
+      return jsonResponse({ status: "success", data: { id: "ord-static" } }, 201);
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const writeCalls = [];
+  const signer = {
+    account: { address: "0xSender" },
+    chain: { id: 8453 },
+    async writeContract(args) {
+      writeCalls.push(args);
+      return `0xtx${writeCalls.length}`;
+    },
+  };
+  const publicClient = { async readContract() { return 1_000_000_000n; } };
+  const client = createPaycrestClient({
+    senderApiKey: "k",
+    fetcher,
+    gateway: { signer, publicClient, aggregatorPublicKey: publicKey },
+  });
+  const result = await client.sender().createOfframpOrder(
+    {
+      amount: "100",
+      source: { type: "crypto", currency: "USDT", network: "base", refundAddress: "0xabc" },
+      destination: {
+        type: "fiat",
+        currency: "NGN",
+        recipient: { institution: "X", accountIdentifier: "1", accountName: "Y", memo: "m" },
+      },
+    },
+    { method: "gateway" },
+  );
+  assert.equal(result.tokenAddress, "0xUSDTbase");
+  assert.equal(tokensFetched, false, "/tokens fetch should be skipped when static entry resolves");
+  clearRegisteredTokens();
+}
+
+async function testHooksObserveRequestsAndErrors() {
+  const { fetcher } = makeMockFetch([
+    jsonResponse({ status: "success", data: { totalOrders: 1, totalOrderVolume: "0", totalFeeEarnings: "0" } }),
+    jsonResponse({ message: "bad" }, 401),
+  ]);
+  const events = [];
+  const client = createPaycrestClient({
+    senderApiKey: "k",
+    fetcher,
+    hooks: {
+      onRequest: (ctx) => { events.push({ kind: "req", attempt: ctx.attempt, method: ctx.method }); },
+      onResponse: (ctx) => { events.push({ kind: "res", statusCode: ctx.statusCode }); },
+      onError: (ctx) => { events.push({ kind: "err", statusCode: ctx.statusCode }); },
+    },
+  });
+  await client.sender().getStats();
+  await assert.rejects(client.sender().getStats());
+
+  // First call: onRequest + onResponse.
+  assert.equal(events[0].kind, "req");
+  assert.equal(events[1].kind, "res");
+  // Second call: onRequest then onError (401).
+  assert.equal(events[2].kind, "req");
+  assert.equal(events[3].kind, "err");
+  assert.equal(events[3].statusCode, 401);
+}
+
+async function testAbortSignalCancelsWaitForStatus() {
+  const fetcher = async () =>
+    jsonResponse({ status: "success", data: { id: "ord", status: "pending" } });
+  const client = createPaycrestClient({ senderApiKey: "k", fetcher });
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 20);
+  await assert.rejects(
+    client
+      .sender()
+      .waitForStatus("ord", "settled", { pollMs: 5, timeoutMs: 10_000, signal: controller.signal }),
+    (err) => err instanceof PaycrestApiError && err.statusCode === 499,
+  );
+}
+
+await testStaticTokenRegistryShortCircuitsLookup();
+await testHooksObserveRequestsAndErrors();
+await testAbortSignalCancelsWaitForStatus();
+await testIterateOrdersWalksPages();
+await testValidationErrorCarriesFieldErrors();
+await testIdempotencyHeaderOnPost();
+await testIdempotencyHeaderOverride();
+await testReferencePreservedIfProvided();
 await testRateFirstOfframp();
 await testRateFirstOnramp();
 await testManualRateSkipsQuote();

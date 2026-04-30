@@ -9,6 +9,44 @@ export interface SupportedToken {
 }
 
 /**
+ * Process-level static token registry. Operators can call
+ * `registerToken(...)` once at startup with the addresses they care
+ * about — the gateway path resolves them without a `/v2/tokens` round-trip.
+ *
+ * Lookup order in `AggregatorRegistry.getToken`: static registry →
+ * cached `/tokens` fetch → live `/tokens` fetch. First hit wins.
+ */
+const STATIC_TOKENS = new Map<string, SupportedToken>();
+
+function staticKey(network: string, symbol: string): string {
+  return `${network.toLowerCase()}::${symbol.toUpperCase()}`;
+}
+
+/**
+ * Register a token statically so the gateway path resolves it without
+ * hitting `/v2/tokens`. Useful for hot tokens (USDT/USDC) the app uses
+ * on every order.
+ */
+export function registerToken(token: SupportedToken): void {
+  STATIC_TOKENS.set(staticKey(token.network, token.symbol), token);
+}
+
+/** Bulk-register a list of tokens (e.g. from a curated `tokens.json`). */
+export function registerTokens(tokens: ReadonlyArray<SupportedToken>): void {
+  for (const t of tokens) registerToken(t);
+}
+
+/** Read-only view of the static registry. Handy for tests + audits. */
+export function listRegisteredTokens(): SupportedToken[] {
+  return Array.from(STATIC_TOKENS.values());
+}
+
+/** Reset the static registry. Test-only escape hatch. */
+export function clearRegisteredTokens(): void {
+  STATIC_TOKENS.clear();
+}
+
+/**
  * Per-process cache for the aggregator's RSA public key (PEM) and the
  * token catalogue. Both are fetched lazily on first use and reused for
  * the lifetime of the process.
@@ -44,6 +82,11 @@ export class AggregatorRegistry {
   }
 
   public async getToken(network: string, symbol: string): Promise<SupportedToken> {
+    // 1) Static registry (zero-RTT for hot tokens).
+    const staticHit = STATIC_TOKENS.get(staticKey(network, symbol));
+    if (staticHit) return staticHit;
+
+    // 2) Live fetch (with in-process cache via getTokensForNetwork).
     const tokens = await this.getTokensForNetwork(network);
     const target = symbol.toUpperCase();
     const match = tokens.find((t) => t.symbol.toUpperCase() === target);
@@ -70,5 +113,13 @@ export class AggregatorRegistry {
     const tokens = response.data ?? [];
     this.tokensByNetwork.set(slug, tokens);
     return tokens;
+  }
+
+  /**
+   * Pre-warm the in-memory cache for a network. Useful at app startup
+   * to take the `/v2/tokens` round-trip out of the order hot path.
+   */
+  public async preload(network: string): Promise<SupportedToken[]> {
+    return this.getTokensForNetwork(network);
   }
 }

@@ -76,11 +76,11 @@ pub struct ListOrdersResponse {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RateQuoteSide {
     pub rate: String,
-    #[serde(rename = "providerIds")]
+    #[serde(rename = "providerIds", default)]
     pub provider_ids: Vec<String>,
-    #[serde(rename = "orderType")]
+    #[serde(rename = "orderType", default)]
     pub order_type: String,
-    #[serde(rename = "refundTimeoutMinutes")]
+    #[serde(rename = "refundTimeoutMinutes", default)]
     pub refund_timeout_minutes: i64,
 }
 

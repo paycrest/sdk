@@ -7,8 +7,9 @@
 # golden parity envelope: exactly `[GET /rates/..., POST /sender/orders,
 # GET /sender/orders/:id]` in that order, with the expected bodies.
 #
-# Rust is intentionally excluded here — its wire behaviour is covered
-# by unit tests and a cargo-based parity client would dominate runtime.
+# Runs all five SDKs: TypeScript, Python, Go, Rust, PHP. Any SDK whose
+# toolchain is missing is skipped with a message; the harness stays
+# green in that case so contributors can run partial validation.
 set -euo pipefail
 
 ROOT="${BUILD_WORKSPACE_DIRECTORY:-$(cd "$(dirname "$0")/../../.." && pwd)}"
@@ -92,6 +93,15 @@ if [[ -n "$GO_CMD" ]]; then
     assert_parity go
 else
     echo "parity: skipping go (go toolchain missing)"
+fi
+
+# --- Rust ----------------------------------------------------------------
+if command -v cargo >/dev/null 2>&1; then
+    reset_server
+    ( cd "$HARNESS_DIR/rust-client" && cargo run --quiet )
+    assert_parity rust
+else
+    echo "parity: skipping rust (cargo missing)"
 fi
 
 # --- PHP -----------------------------------------------------------------

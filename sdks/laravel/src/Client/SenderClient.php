@@ -48,7 +48,7 @@ class SenderClient implements SenderClientInterface
      *                `{ txHash, approveTxHash, gatewayAddress, tokenAddress,
      *                   amount, rate, messageHash, refundAddress, network }`.
      */
-    public function createOfframpOrder(array $payload, string $method = 'api'): array
+    public function createOfframpOrder(array $payload, string $method = 'api', ?string $idempotencyKey = null): array
     {
         if ($method === 'gateway') {
             if ($this->gatewayClient === null) {
@@ -60,32 +60,97 @@ class SenderClient implements SenderClientInterface
             throw new ValidationError("Unknown off-ramp method \"{$method}\"");
         }
 
-        $payload = $this->resolveRateIfMissing(
-            $payload,
-            network: (string)($payload['source']['network'] ?? ''),
-            token: (string)($payload['source']['currency'] ?? ''),
-            amount: (string)($payload['amount'] ?? ''),
-            fiat: (string)($payload['destination']['currency'] ?? ''),
-            side: 'sell',
+        $payload = $this->ensureReference(
+            $this->resolveRateIfMissing(
+                $payload,
+                network: (string)($payload['source']['network'] ?? ''),
+                token: (string)($payload['source']['currency'] ?? ''),
+                amount: (string)($payload['amount'] ?? ''),
+                fiat: (string)($payload['destination']['currency'] ?? ''),
+                side: 'sell',
+            )
         );
 
-        $response = $this->http->request('POST', '/sender/orders', $payload);
+        $response = $this->http->request('POST', '/sender/orders', $payload, [], $idempotencyKey);
         return $response['data'];
     }
 
-    public function createOnrampOrder(array $payload): array
+    public function createOnrampOrder(array $payload, ?string $idempotencyKey = null): array
     {
-        $payload = $this->resolveRateIfMissing(
-            $payload,
-            network: (string)($payload['destination']['recipient']['network'] ?? ''),
-            token: (string)($payload['destination']['currency'] ?? ''),
-            amount: (string)($payload['amount'] ?? ''),
-            fiat: (string)($payload['source']['currency'] ?? ''),
-            side: 'buy',
+        $payload = $this->ensureReference(
+            $this->resolveRateIfMissing(
+                $payload,
+                network: (string)($payload['destination']['recipient']['network'] ?? ''),
+                token: (string)($payload['destination']['currency'] ?? ''),
+                amount: (string)($payload['amount'] ?? ''),
+                fiat: (string)($payload['source']['currency'] ?? ''),
+                side: 'buy',
+            )
         );
 
-        $response = $this->http->request('POST', '/sender/orders', $payload);
+        $response = $this->http->request('POST', '/sender/orders', $payload, [], $idempotencyKey);
         return $response['data'];
+    }
+
+    /**
+     * Stamp the payload with a UUID reference when the caller didn't
+     * provide one — gives the aggregator a stable dedup key across
+     * retries of the same logical request.
+     */
+    private function ensureReference(array $payload): array
+    {
+        if (!empty($payload['reference']) && is_string($payload['reference'])) {
+            return $payload;
+        }
+        $payload['reference'] = HttpClient::uuidV4();
+        return $payload;
+    }
+
+    /**
+     * Yield each sender order across every page, one at a time.
+     *
+     * @param ListOrdersQuery|array $query
+     * @return \Generator<int, array<string, mixed>>
+     */
+    public function iterateOrders(ListOrdersQuery|array $query = []): \Generator
+    {
+        if (is_array($query)) {
+            $query = new ListOrdersQuery(
+                page: (int)($query['page'] ?? 1),
+                pageSize: (int)($query['pageSize'] ?? 50),
+                status: $query['status'] ?? null,
+            );
+        }
+        $page = max(1, $query->page);
+        $yielded = 0;
+        while (true) {
+            $response = $this->listOrders(new ListOrdersQuery(page: $page, pageSize: $query->pageSize, status: $query->status));
+            $orders = $response['orders'] ?? [];
+            if (!is_array($orders) || count($orders) === 0) {
+                return;
+            }
+            foreach ($orders as $order) {
+                $yielded++;
+                yield $order;
+            }
+            $total = (int)($response['total'] ?? 0);
+            if ($total > 0 && $yielded >= $total) {
+                return;
+            }
+            $page++;
+        }
+    }
+
+    /**
+     * Collect every page into a single array. Prefer iterateOrders()
+     * for streaming workloads.
+     *
+     * @param ListOrdersQuery|array $query
+     * @return array<int, array<string, mixed>>
+     */
+    public function listAllOrders(ListOrdersQuery|array $query = []): array
+    {
+        return iterator_to_array($this->iterateOrders($query), false);
     }
 
     /**

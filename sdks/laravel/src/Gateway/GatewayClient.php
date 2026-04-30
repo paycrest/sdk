@@ -141,6 +141,13 @@ final class GatewayClient
      */
     private function lookupToken(string $networkSlug, string $symbol): array
     {
+        // 1) Static registry — zero-RTT for hot tokens.
+        $static = TokenRegistry::lookup($networkSlug, $symbol);
+        if ($static !== null) {
+            return $static;
+        }
+
+        // 2) Live fetch (with in-memory cache).
         $slug = strtolower($networkSlug);
         if (!isset($this->tokensCache[$slug])) {
             $response = $this->publicHttp->request('GET', '/tokens', null, ['network' => $slug]);

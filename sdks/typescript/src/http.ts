@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   NetworkError,
   PaycrestApiError,
@@ -27,6 +29,20 @@ interface RequestOptions {
   body?: unknown;
   /** Override retry policy per-call. Default: retry GETs only. */
   retry?: Partial<RetryPolicy>;
+  /**
+   * Idempotency key to attach as `Idempotency-Key` header. If omitted
+   * on a POST, the HTTP client auto-generates a UUIDv4 so retries of
+   * the same logical request stay linked even across network
+   * uncertainty. The key is stable across retry attempts within a
+   * single `request()` call.
+   */
+  idempotencyKey?: string;
+  /**
+   * Caller-supplied cancellation signal. When aborted, the in-flight
+   * request throws a NetworkError and the retry loop bails out
+   * immediately. Composed with the internal per-request timeout.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -53,6 +69,37 @@ export const DEFAULT_RETRY_POLICY: RetryPolicy = {
   maxDelayMs: 10_000,
 };
 
+/**
+ * Observation hooks fired by the HTTP client. Hooks never mutate the
+ * request or response — they exist purely for integrators who want to
+ * plug in logging / metrics / tracing (OpenTelemetry, Datadog, etc.)
+ * without forking the SDK. Errors thrown from hooks are swallowed so
+ * a faulty tracer can't break the SDK's own error semantics.
+ */
+export interface RequestHookContext {
+  method: "GET" | "POST";
+  url: string;
+  attempt: number;
+  idempotencyKey?: string;
+}
+
+export interface ResponseHookContext extends RequestHookContext {
+  statusCode: number;
+  durationMs: number;
+}
+
+export interface ErrorHookContext extends RequestHookContext {
+  error: unknown;
+  durationMs: number;
+  statusCode?: number;
+}
+
+export interface RequestHooks {
+  onRequest?(ctx: RequestHookContext): void | Promise<void>;
+  onResponse?(ctx: ResponseHookContext): void | Promise<void>;
+  onError?(ctx: ErrorHookContext): void | Promise<void>;
+}
+
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 
 export class HttpClient {
@@ -61,6 +108,7 @@ export class HttpClient {
   private readonly timeoutMs: number;
   private readonly fetcher: typeof fetch;
   private readonly retryPolicy: RetryPolicy;
+  private readonly hooks: RequestHooks;
 
   constructor(
     baseUrl: string,
@@ -68,15 +116,17 @@ export class HttpClient {
     timeoutMs: number,
     fetcher: typeof fetch,
     retryPolicy: RetryPolicy = DEFAULT_RETRY_POLICY,
+    hooks: RequestHooks = {},
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.apiKey = apiKey;
     this.timeoutMs = timeoutMs;
     this.fetcher = fetcher;
     this.retryPolicy = retryPolicy;
+    this.hooks = hooks;
   }
 
-  public async request<T>({ method, path, query, body, retry }: RequestOptions): Promise<ApiResponse<T>> {
+  public async request<T>({ method, path, query, body, retry, idempotencyKey, signal }: RequestOptions): Promise<ApiResponse<T>> {
     const url = new URL(`${this.baseUrl}${path}`);
     if (query) {
       for (const [key, value] of Object.entries(query)) {
@@ -87,24 +137,48 @@ export class HttpClient {
     }
 
     const policy = { ...this.retryPolicy, ...retry };
+    const effectiveIdempotencyKey =
+      idempotencyKey ?? (method === "POST" ? randomUUID() : undefined);
     let lastError: PaycrestApiError | undefined;
 
     for (let attempt = 1; attempt <= policy.retries; attempt++) {
+      if (signal?.aborted) {
+        throw new NetworkError("Request aborted by caller");
+      }
+      const baseCtx: RequestHookContext = {
+        method,
+        url: url.toString(),
+        attempt,
+        idempotencyKey: effectiveIdempotencyKey,
+      };
+      await safelyInvoke(this.hooks.onRequest, baseCtx);
+      const startedAt = Date.now();
       try {
-        return await this.send<T>(url, method, body);
+        const response = await this.send<T>(url, method, body, effectiveIdempotencyKey, signal);
+        await safelyInvoke(this.hooks.onResponse, {
+          ...baseCtx,
+          statusCode: 200,
+          durationMs: Date.now() - startedAt,
+        });
+        return response;
       } catch (err) {
-        const typed = err instanceof PaycrestApiError ? err : new NetworkError("Unexpected transport error", err);
-        lastError = typed;
+        const typedErr = err instanceof PaycrestApiError ? err : new NetworkError("Unexpected transport error", err);
+        await safelyInvoke(this.hooks.onError, {
+          ...baseCtx,
+          error: typedErr,
+          statusCode: typedErr.statusCode || undefined,
+          durationMs: Date.now() - startedAt,
+        });
+        lastError = typedErr;
+        if (signal?.aborted) {
+          throw new NetworkError("Request aborted by caller");
+        }
         if (attempt >= policy.retries) break;
 
-        // Transport errors are retried on any verb (the server never
-        // saw us). Acknowledged server errors are retried only on
-        // idempotent verbs — POSTs that got a server response might
-        // have partially succeeded and we must not double-submit.
-        const retryable = this.isRetryable(typed, method);
+        const retryable = this.isRetryable(typedErr, method);
         if (!retryable) break;
 
-        const delay = this.computeBackoff(attempt, typed, policy);
+        const delay = this.computeBackoff(attempt, typedErr, policy);
         await sleep(delay);
       }
     }
@@ -112,18 +186,33 @@ export class HttpClient {
     throw lastError ?? new NetworkError("Unknown HTTP failure");
   }
 
-  private async send<T>(url: URL, method: "GET" | "POST", body: unknown): Promise<ApiResponse<T>> {
+  private async send<T>(url: URL, method: "GET" | "POST", body: unknown, idempotencyKey?: string, callerSignal?: AbortSignal): Promise<ApiResponse<T>> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
+    // If the caller passed a signal, propagate its abort into our
+    // timeout-managed controller so the in-flight fetch unwinds.
+    const onCallerAbort = () => controller.abort();
+    if (callerSignal) {
+      if (callerSignal.aborted) {
+        controller.abort();
+      } else {
+        callerSignal.addEventListener("abort", onCallerAbort, { once: true });
+      }
+    }
+
     try {
+      const headers: Record<string, string> = {
+        "API-Key": this.apiKey,
+        "Content-Type": "application/json",
+      };
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
+      }
       const response = await this.fetcher(url, {
         method,
         signal: controller.signal,
-        headers: {
-          "API-Key": this.apiKey,
-          "Content-Type": "application/json",
-        },
+        headers,
         body: body ? JSON.stringify(body) : undefined,
       });
 
@@ -146,6 +235,9 @@ export class HttpClient {
       throw new NetworkError("Network error calling Paycrest API", err);
     } finally {
       clearTimeout(timeout);
+      if (callerSignal) {
+        callerSignal.removeEventListener("abort", onCallerAbort);
+      }
     }
   }
 
@@ -171,4 +263,17 @@ export class HttpClient {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function safelyInvoke<T>(
+  hook: ((ctx: T) => void | Promise<void>) | undefined,
+  ctx: T,
+): Promise<void> {
+  if (!hook) return;
+  try {
+    await hook(ctx);
+  } catch {
+    // A faulty tracer / logger hook must not break SDK semantics.
+    // Consumers who care about hook failures should catch inside the hook.
+  }
 }

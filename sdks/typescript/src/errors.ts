@@ -22,11 +22,40 @@ export class PaycrestApiError extends Error {
   }
 }
 
+/** One field-level error as returned by the aggregator's 400 responses. */
+export interface FieldError {
+  field: string;
+  message: string;
+}
+
 export class ValidationError extends PaycrestApiError {
+  /**
+   * Structured field-level errors parsed from `details`. The aggregator
+   * returns them as `data: [{ field, message }, ...]` on 400 responses;
+   * when `details` has that shape they're lifted here for direct binding
+   * to form validators. Empty array when none were returned.
+   */
+  public readonly fieldErrors: ReadonlyArray<FieldError>;
+
   constructor(message: string, details?: unknown) {
     super(message, 400, details);
     this.name = "ValidationError";
+    this.fieldErrors = parseFieldErrors(details);
   }
+}
+
+function parseFieldErrors(details: unknown): ReadonlyArray<FieldError> {
+  if (!Array.isArray(details)) return [];
+  const out: FieldError[] = [];
+  for (const item of details) {
+    if (item && typeof item === "object") {
+      const row = item as Record<string, unknown>;
+      if (typeof row.field === "string" && typeof row.message === "string") {
+        out.push({ field: row.field, message: row.message });
+      }
+    }
+  }
+  return out;
 }
 
 export class AuthenticationError extends PaycrestApiError {

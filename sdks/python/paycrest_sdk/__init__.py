@@ -24,18 +24,41 @@ from .gateway_client import (
     scale_rate,
     to_subunits,
 )
-from .http import DEFAULT_RETRY_POLICY, HttpClient, RetryPolicy
+from .http import (
+    DEFAULT_RETRY_POLICY,
+    HttpClient,
+    RequestHookContext,
+    RequestHooks,
+    RetryPolicy,
+)
 from .networks import NETWORKS, NetworkInfo, get_network, register_network
 from .provider import ProviderClient, ProviderListOrdersQuery
-from .registry import AggregatorRegistry, SupportedToken
+from .registry import (
+    AggregatorRegistry,
+    SupportedToken,
+    clear_registered_tokens,
+    list_registered_tokens,
+    register_token,
+    register_tokens,
+)
 from .sender import (
     ListOrdersQuery,
     SenderClient,
     WaitForStatusOptions,
 )
+from .webhook_middleware import (
+    PaycrestWebhookEvent,
+    fastapi_paycrest_webhook,
+    flask_paycrest_webhook,
+    parse_paycrest_webhook,
+)
 from .webhooks import verify_webhook_signature
 
 __all__ = [
+    "PaycrestWebhookEvent",
+    "fastapi_paycrest_webhook",
+    "flask_paycrest_webhook",
+    "parse_paycrest_webhook",
     "PaycrestClient",
     "SenderClient",
     "ProviderClient",
@@ -49,9 +72,15 @@ __all__ = [
     "GatewayCreateOrderArgs",
     "AggregatorRegistry",
     "SupportedToken",
+    "register_token",
+    "register_tokens",
+    "list_registered_tokens",
+    "clear_registered_tokens",
     "HttpClient",
     "RetryPolicy",
     "DEFAULT_RETRY_POLICY",
+    "RequestHooks",
+    "RequestHookContext",
     "PaycrestAPIError",
     "ValidationError",
     "AuthenticationError",

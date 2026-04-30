@@ -21,17 +21,18 @@ export class PaycrestClient {
     const senderApiKey = options.senderApiKey || options.apiKey;
     const providerApiKey = options.providerApiKey || options.apiKey;
 
-    this.publicHttp = new HttpClient(baseUrl, "", timeoutMs, fetcher);
+    const hooks = options.hooks ?? {};
+    this.publicHttp = new HttpClient(baseUrl, "", timeoutMs, fetcher, undefined, hooks);
     this.registry = new AggregatorRegistry(
       this.publicHttp,
       options.gateway?.aggregatorPublicKey,
     );
 
     if (senderApiKey) {
-      this.senderHttp = new HttpClient(baseUrl, senderApiKey, timeoutMs, fetcher);
+      this.senderHttp = new HttpClient(baseUrl, senderApiKey, timeoutMs, fetcher, undefined, hooks);
     }
     if (providerApiKey) {
-      this.providerHttp = new HttpClient(baseUrl, providerApiKey, timeoutMs, fetcher);
+      this.providerHttp = new HttpClient(baseUrl, providerApiKey, timeoutMs, fetcher, undefined, hooks);
     }
 
     if (options.gateway?.signer && options.gateway?.publicClient) {

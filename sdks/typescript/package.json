@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node tests/smoke.mjs && node tests/contract.mjs"
+    "test": "npm run build && node tests/smoke.mjs && node tests/contract.mjs && node tests/webhook.mjs"
   },
   "keywords": [
     "paycrest",
@@ -24,17 +24,11 @@
   "publishConfig": {
     "access": "public"
   },
-  "peerDependencies": {
-    "viem": "^2.0.0"
-  },
-  "peerDependenciesMeta": {
-    "viem": {
-      "optional": true
-    }
+  "dependencies": {
+    "viem": "^2.21.0"
   },
   "devDependencies": {
     "@types/node": "latest",
-    "typescript": "latest",
-    "viem": "^2.21.0"
+    "typescript": "latest"
   }
 }

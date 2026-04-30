@@ -42,7 +42,7 @@ final class MockHttpClient extends HttpClient
         return $this;
     }
 
-    public function request(string $method, string $path, ?array $body = null, array $query = []): array
+    public function request(string $method, string $path, ?array $body = null, array $query = [], ?string $idempotencyKey = null, ?int $timeoutSeconds = null): array
     {
         $filteredQuery = array_filter($query, static fn ($value): bool => $value !== null);
         $call = [
@@ -50,6 +50,7 @@ final class MockHttpClient extends HttpClient
             'path' => $path,
             'body' => $body,
             'query' => $filteredQuery,
+            'idempotencyKey' => $idempotencyKey,
         ];
         $this->calls[] = $call;
 

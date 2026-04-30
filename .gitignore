@@ -19,6 +19,7 @@ sdks/go/bin/
 
 # Rust
 sdks/rust/target/
+scripts/tests/parity/rust-client/target/
 
 # PHP / Laravel
 vendor/

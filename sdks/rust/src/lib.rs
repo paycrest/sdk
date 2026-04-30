@@ -7,9 +7,12 @@ pub mod networks;
 pub mod provider;
 pub mod registry;
 pub mod sender;
+pub mod webhook_middleware;
 pub mod webhooks;
 
-pub use client::{ClientOptions, PaycrestClient, RetryPolicy, DEFAULT_BASE_URL};
+pub use client::{
+    ClientOptions, HookContext, PaycrestClient, RequestHooks, RetryPolicy, DEFAULT_BASE_URL,
+};
 pub use encryption::{build_recipient_payload, encrypt_recipient_payload, RecipientPayload};
 pub use error::{ErrorKind, PaycrestError};
 pub use gateway::{
@@ -18,10 +21,15 @@ pub use gateway::{
 };
 pub use networks::{get_network, register_network, NetworkInfo};
 pub use provider::ProviderClient;
-pub use registry::{AggregatorRegistry, SupportedToken};
-pub use sender::{
-    OfframpMethod, OfframpOrderOutcome, SenderClient, WaitForStatusOptions, WaitStatusTarget,
+pub use registry::{
+    clear_registered_tokens, list_registered_tokens, register_token, register_tokens,
+    AggregatorRegistry, SupportedToken,
 };
+pub use sender::{
+    CreateOrderOptions, OfframpMethod, OfframpOrderOutcome, SenderClient, WaitForStatusOptions,
+    WaitStatusTarget,
+};
+pub use webhook_middleware::{parse_webhook, WebhookError, WebhookEvent};
 
 #[cfg(test)]
 mod tests {
@@ -40,3 +48,6 @@ mod tests {
 
 #[cfg(test)]
 mod contract_tests;
+
+#[cfg(test)]
+mod webhook_tests;

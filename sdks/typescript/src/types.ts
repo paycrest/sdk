@@ -113,6 +113,17 @@ export type OfframpMethod = "api" | "gateway";
 
 export interface CreateOfframpOrderOptions {
   method?: OfframpMethod;
+  /**
+   * Idempotency key attached to the POST as `Idempotency-Key`. If omitted
+   * on the api method, the SDK auto-generates a UUID so a retry after
+   * network uncertainty stays linked. Forward-compat with server-side
+   * idempotency; harmless if the server ignores it today.
+   */
+  idempotencyKey?: string;
+}
+
+export interface CreateOnrampOrderOptions {
+  idempotencyKey?: string;
 }
 
 export interface GatewayOrderResult {
@@ -206,6 +217,11 @@ export interface WaitForStatusOptions {
   pollMs?: number;
   /** Overall timeout in milliseconds. Default: 300000 (5 min). */
   timeoutMs?: number;
+  /**
+   * Caller-supplied abort signal. When aborted, `waitForStatus` stops
+   * polling immediately and throws a NetworkError.
+   */
+  signal?: AbortSignal;
 }
 
 export interface ProviderListOrdersQuery extends ListOrdersQuery {
@@ -247,6 +263,13 @@ export interface PaycrestClientOptions {
   baseUrl?: string;
   timeoutMs?: number;
   fetcher?: typeof fetch;
+  /**
+   * Observation hooks — plug in structured logging, metrics, or
+   * OpenTelemetry tracing without forking. Hooks are passive observers;
+   * exceptions from inside hooks are swallowed so a faulty tracer can't
+   * break the SDK's own error semantics.
+   */
+  hooks?: import("./http.js").RequestHooks;
   /**
    * Required only when calling `createOfframpOrder(payload, { method: 'gateway' })`.
    * `signer` is a viem `WalletClient` with an `account`; `publicClient` is a viem
