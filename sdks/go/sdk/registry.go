@@ -71,14 +71,18 @@ func staticTokenLookup(network, symbol string) (SupportedToken, bool) {
 }
 
 // aggregatorRegistry caches the aggregator's public key and per-network
-// token catalog in-memory for the process lifetime.
+// token catalog in-memory for the process lifetime. The `fetchMu`
+// serializer guarantees that two concurrent first-fetch callers share
+// a single underlying HTTP request (closes the RLock→drop→Lock TOCTOU
+// window).
 type aggregatorRegistry struct {
-	http             *httpClientConfig
-	publicKeyMu      sync.RWMutex
-	publicKey        string
+	http              *httpClientConfig
+	publicKeyMu       sync.RWMutex
+	publicKey         string
 	publicKeyOverride string
-	tokensMu         sync.RWMutex
-	tokensByNetwork  map[string][]SupportedToken
+	tokensMu          sync.RWMutex
+	tokensByNetwork   map[string][]SupportedToken
+	fetchMu           sync.Mutex
 }
 
 func newAggregatorRegistry(http *httpClientConfig, publicKeyOverride string) *aggregatorRegistry {
@@ -93,8 +97,20 @@ func (r *aggregatorRegistry) getPublicKey(ctx context.Context) (string, error) {
 	if r.publicKeyOverride != "" {
 		return r.publicKeyOverride, nil
 	}
+	// Fast path: already fetched.
 	r.publicKeyMu.RLock()
 	cached := r.publicKey
+	r.publicKeyMu.RUnlock()
+	if cached != "" {
+		return cached, nil
+	}
+
+	// Slow path: serialize concurrent first-fetches and double-check
+	// the cache after acquiring the lock.
+	r.fetchMu.Lock()
+	defer r.fetchMu.Unlock()
+	r.publicKeyMu.RLock()
+	cached = r.publicKey
 	r.publicKeyMu.RUnlock()
 	if cached != "" {
 		return cached, nil
@@ -116,8 +132,20 @@ func (r *aggregatorRegistry) getPublicKey(ctx context.Context) (string, error) {
 
 func (r *aggregatorRegistry) getTokensForNetwork(ctx context.Context, network string) ([]SupportedToken, error) {
 	slug := strings.ToLower(network)
+	// Fast path: already fetched.
 	r.tokensMu.RLock()
 	cached, ok := r.tokensByNetwork[slug]
+	r.tokensMu.RUnlock()
+	if ok {
+		return cached, nil
+	}
+
+	// Slow path: serialize concurrent first-fetches and double-check
+	// the cache after acquiring the lock.
+	r.fetchMu.Lock()
+	defer r.fetchMu.Unlock()
+	r.tokensMu.RLock()
+	cached, ok = r.tokensByNetwork[slug]
 	r.tokensMu.RUnlock()
 	if ok {
 		return cached, nil

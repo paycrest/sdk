@@ -72,6 +72,11 @@ pub struct AggregatorRegistry {
     public_key_override: Option<String>,
     public_key: RwLock<Option<String>>,
     tokens_by_network: RwLock<HashMap<String, Vec<SupportedToken>>>,
+    /// Serializer for first-fetch paths so two concurrent callers don't
+    /// each fire `/v2/pubkey` or `/v2/tokens?network=…`. The async
+    /// mutex lets callers `await` the in-flight fetch without blocking
+    /// the executor.
+    fetch_lock: tokio::sync::Mutex<()>,
 }
 
 impl AggregatorRegistry {
@@ -81,6 +86,7 @@ impl AggregatorRegistry {
             public_key_override,
             public_key: RwLock::new(None),
             tokens_by_network: RwLock::new(HashMap::new()),
+            fetch_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -88,6 +94,15 @@ impl AggregatorRegistry {
         if let Some(pem) = &self.public_key_override {
             return Ok(pem.clone());
         }
+        // Fast path — already fetched.
+        if let Ok(guard) = self.public_key.read() {
+            if let Some(pem) = guard.as_ref() {
+                return Ok(pem.clone());
+            }
+        }
+        // Slow path — serialize concurrent first-fetches so we issue
+        // exactly one `/pubkey` request even under contention.
+        let _serialize = self.fetch_lock.lock().await;
         if let Ok(guard) = self.public_key.read() {
             if let Some(pem) = guard.as_ref() {
                 return Ok(pem.clone());
@@ -112,6 +127,14 @@ impl AggregatorRegistry {
         network: &str,
     ) -> Result<Vec<SupportedToken>, PaycrestError> {
         let slug = network.to_lowercase();
+        // Fast path — already fetched.
+        if let Ok(guard) = self.tokens_by_network.read() {
+            if let Some(cached) = guard.get(&slug) {
+                return Ok(cached.clone());
+            }
+        }
+        // Slow path — serialize concurrent first-fetches.
+        let _serialize = self.fetch_lock.lock().await;
         if let Ok(guard) = self.tokens_by_network.read() {
             if let Some(cached) = guard.get(&slug) {
                 return Ok(cached.clone());
@@ -161,5 +184,91 @@ impl AggregatorRegistry {
     /// Pre-warm the in-memory cache for a network.
     pub async fn preload(&self, network: &str) -> Result<Vec<SupportedToken>, PaycrestError> {
         self.get_tokens_for_network(network).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::AggregatorRegistry;
+    use crate::client::{HttpContext, RequestHooks, RetryPolicy};
+
+    /// Spawn a counting HTTP fixture that always returns the canned
+    /// token-list response, with a small delay so concurrent callers
+    /// have time to overlap on the registry's slow path.
+    async fn spawn_counting_tokens_server() -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_clone = Arc::clone(&hits);
+
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let hits = Arc::clone(&hits_clone);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = socket.read(&mut buf).await;
+                    // Force overlap on the slow path.
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    hits.fetch_add(1, Ordering::SeqCst);
+
+                    let body = br#"{"status":"success","message":"OK","data":[{"symbol":"USDT","contractAddress":"0xToken","decimals":6,"baseCurrency":"USD","network":"base"}]}"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    let _ = socket.write_all(body).await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+
+        (format!("http://127.0.0.1:{port}"), hits)
+    }
+
+    /// Concurrent first-fetch callers should share a single `/tokens`
+    /// HTTP request. Without the registry's first-fetch serializer
+    /// (the TOCTOU we fixed pre-2.1) this test would observe N hits
+    /// for N concurrent callers, because each one would miss the
+    /// `RwLock::read` cache before the first writer populated it.
+    #[tokio::test]
+    async fn concurrent_first_fetches_share_one_request() {
+        let (base_url, hits) = spawn_counting_tokens_server().await;
+        let http = HttpContext::new("", base_url, RetryPolicy::default(), RequestHooks::default());
+        let registry = Arc::new(AggregatorRegistry::new(http, Some("PEM-OVERRIDE".to_string())));
+
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let registry = Arc::clone(&registry);
+            handles.push(tokio::spawn(async move {
+                registry.get_tokens_for_network("base").await
+            }));
+        }
+
+        // All callers must succeed and observe the same row.
+        for h in handles {
+            let tokens = h.await.unwrap().expect("fetch ok");
+            assert_eq!(tokens.len(), 1);
+            assert_eq!(tokens[0].symbol, "USDT");
+        }
+
+        let observed = hits.load(Ordering::SeqCst);
+        assert_eq!(
+            observed, 1,
+            "registry must serialize first-fetches; saw {observed} HTTP hits"
+        );
+
+        // Subsequent fetches stay cached — no new hits.
+        let _ = registry.get_tokens_for_network("base").await.unwrap();
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 }

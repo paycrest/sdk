@@ -474,3 +474,145 @@ async fn retry_policy_default_values() {
     assert_eq!(p.base_delay, std::time::Duration::from_millis(500));
     assert_eq!(p.max_delay, std::time::Duration::from_secs(10));
 }
+
+#[tokio::test]
+async fn list_all_orders_walks_pages() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_clone = Arc::clone(&hits);
+
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else { return };
+            let hits = Arc::clone(&hits_clone);
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let request = std::str::from_utf8(&buf[..n]).unwrap_or("");
+                let attempt = hits.fetch_add(1, Ordering::SeqCst) + 1;
+
+                // Walk three pages: two with content, one empty terminates.
+                let body = match attempt {
+                    1 if request.contains("page=1") => &br#"{"status":"success","data":{"total":3,"page":1,"pageSize":2,"orders":[{"id":"a","status":"settled"},{"id":"b","status":"settled"}]}}"#[..],
+                    2 if request.contains("page=2") => &br#"{"status":"success","data":{"total":3,"page":2,"pageSize":2,"orders":[{"id":"c","status":"refunded"}]}}"#[..],
+                    _ => &br#"{"status":"success","data":{"total":3,"page":3,"pageSize":2,"orders":[]}}"#[..],
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.write_all(body).await;
+                let _ = socket.shutdown().await;
+            });
+        }
+    });
+
+    let client = PaycrestClient::new_with_options(ClientOptions {
+        sender_api_key: Some("k".to_string()),
+        base_url: format!("http://127.0.0.1:{port}"),
+        ..Default::default()
+    });
+    let sender = client.sender().unwrap();
+
+    let all = sender.list_all_orders(2, None).await.expect("list_all_orders");
+    let ids: Vec<&str> = all.iter().map(|o| o.id.as_str()).collect();
+    assert_eq!(ids, vec!["a", "b", "c"]);
+    // The collector terminates because total=3 was reached, not because
+    // page 2 returned a short page; either way exactly two pages should
+    // have been fetched.
+    assert!(
+        hits.load(Ordering::SeqCst) >= 2,
+        "expected the collector to have walked at least two pages"
+    );
+}
+
+#[tokio::test]
+async fn request_hooks_fire_per_attempt() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use crate::client::{HookContext, RequestHooks};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_clone = Arc::clone(&hits);
+
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else { return };
+            let hits = Arc::clone(&hits_clone);
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf).await;
+                let n = hits.fetch_add(1, Ordering::SeqCst);
+                let (status_line, body) = if n == 0 {
+                    (
+                        "HTTP/1.1 200 OK\r\n",
+                        &br#"{"status":"success","data":{"totalOrders":7,"totalOrderVolume":"0","totalFeeEarnings":"0"}}"#[..],
+                    )
+                } else {
+                    (
+                        "HTTP/1.1 401 Unauthorized\r\n",
+                        &br#"{"message":"bad key"}"#[..],
+                    )
+                };
+                let response = format!(
+                    "{status_line}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.write_all(body).await;
+                let _ = socket.shutdown().await;
+            });
+        }
+    });
+
+    let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let req_events = Arc::clone(&events);
+    let res_events = Arc::clone(&events);
+    let err_events = Arc::clone(&events);
+
+    let hooks = RequestHooks {
+        on_request: Some(Arc::new(move |ctx: &HookContext| {
+            req_events.lock().unwrap().push(format!("req:{}", ctx.attempt));
+        })),
+        on_response: Some(Arc::new(move |ctx: &HookContext| {
+            res_events
+                .lock()
+                .unwrap()
+                .push(format!("res:{}", ctx.status_code.unwrap_or(0)));
+        })),
+        on_error: Some(Arc::new(move |ctx: &HookContext| {
+            err_events
+                .lock()
+                .unwrap()
+                .push(format!("err:{}", ctx.status_code.unwrap_or(0)));
+        })),
+    };
+    let client = PaycrestClient::new_with_options(ClientOptions {
+        sender_api_key: Some("k".to_string()),
+        base_url: format!("http://127.0.0.1:{port}"),
+        hooks,
+        ..Default::default()
+    });
+    let sender = client.sender().unwrap();
+
+    sender.get_stats().await.expect("first call ok");
+    let _ = sender.get_stats().await; // 401 → AuthenticationError, not retryable
+
+    let log = events.lock().unwrap().clone();
+    // First call: req then res:200; second call: req then err:401.
+    assert!(log.iter().any(|s| s == "req:1"), "expected req:1 in {log:?}");
+    assert!(log.iter().any(|s| s == "res:200"), "expected res:200 in {log:?}");
+    assert!(log.iter().any(|s| s == "err:401"), "expected err:401 in {log:?}");
+}

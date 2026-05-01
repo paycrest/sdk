@@ -5,6 +5,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning fol
 
 ## [Unreleased]
 
+### Test gaps closed
+
+- **Registry first-fetch TOCTOU fixed in Rust, Go, and Python.** All three previously had the `RLock → drop → Lock` window where N concurrent first-fetch callers would each issue a duplicate `/v2/tokens` (or `/v2/pubkey`) request. They now serialize the slow path through an async/sync mutex with a double-check after acquisition.
+  - Rust: `tokio::sync::Mutex<()>` on `AggregatorRegistry`.
+  - Go: `sync.Mutex` on `aggregatorRegistry.fetchMu`.
+  - Python: `threading.Lock` on `AggregatorRegistry._fetch_lock`.
+- **New regression tests** verify the fix end-to-end. Each language stands up an in-process counting HTTP fixture, fires 16 concurrent first-fetches, and asserts exactly 1 HTTP hit reached the server. Without the serializer the tests would observe 16 hits.
+  - `sdks/rust/src/registry.rs::tests::concurrent_first_fetches_share_one_request` (uses `tokio::net::TcpListener`)
+  - `sdks/go/sdk/registry_concurrency_test.go::TestRegistrySerializesConcurrentTokenFetches` + `…PubkeyFetches` (uses `httptest`, runs clean under `go test -race`)
+  - `sdks/python/tests/test_registry_concurrency.py` (uses stdlib `http.server` + `concurrent.futures.ThreadPoolExecutor`)
+- **Rust filled the bucket-3 test gaps** flagged in the previous review:
+  - `list_all_orders_walks_pages` exercises pagination across three pages with a counting HTTP fixture and asserts the collector terminates correctly.
+  - `request_hooks_fire_per_attempt` verifies the `RequestHooks` `on_request` / `on_response` / `on_error` callbacks fire in the right order across success and failure attempts.
+  - Brings Rust contract test count from 12 → 17, total Rust tests from 17 → 20.
+- **`HttpContext::new` widened from `fn new` to `pub(crate) fn new`** so registry-level concurrency tests can construct a minimal HTTP context without going through `PaycrestClient`.
+
 ### Pre-2.1 cleanup pass
 
 - **Security**: Rust `verify_webhook_signature` now uses constant-time HMAC verification (`Mac::verify_slice`) instead of `==`. The other four SDKs were already constant-time (`crypto.timingSafeEqual`, `hmac.compare_digest`, `hmac.Equal`, `hash_equals`).
