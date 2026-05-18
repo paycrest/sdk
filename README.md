@@ -2,13 +2,13 @@
 
 Multi-language SDK monorepo for the Paycrest API (`https://api.paycrest.io/v2`), designed to publish first-class clients with a single canonical identity — **`paycrest/sdk`** — adapted to each registry's naming rules:
 
-| Language        | Package identity           | Why that exact form                                                                                  |
-| --------------- | -------------------------- | ---------------------------------------------------------------------------------------------------- |
-| TypeScript (npm)| `@paycrest/sdk`            | npm scoped package form.                                                                             |
-| Python (PyPI)   | `paycrest-sdk`             | PyPI has no scope separator; hyphenated equivalent is the canonical form.                            |
-| Rust (crates.io)| `paycrest-sdk`             | crates.io has no scope separator.                                                                    |
-| PHP (Packagist) | `paycrest/sdk`             | Packagist supports `vendor/package`, so the canonical identity is used verbatim.                     |
-| Go (modules)    | `github.com/paycrest/sdk-go` | Go modules require the module path to match the git repo URL. The Go mirror lives at `paycrest/sdk-go`, so the `-go` suffix is mandated by Go's module system. |
+| Language        | Package identity                   | Why that exact form                                                                                  |
+| --------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| TypeScript (npm)| `@paycrest/sdk`                    | npm scoped package form.                                                                             |
+| Python (PyPI)   | `paycrest-sdk`                     | PyPI has no scope separator; hyphenated equivalent is the canonical form.                            |
+| Rust (crates.io)| `paycrest-sdk`                     | crates.io has no scope separator.                                                                    |
+| PHP (Packagist) | `paycrest/sdk`                     | Packagist supports `vendor/package`, so the canonical identity is used verbatim. Mirrored to a standalone repo because Packagist requires `composer.json` at the repo root. |
+| Go (modules)    | `github.com/paycrest/sdk/sdks/go`  | Subdirectory module so the Go SDK ships from this monorepo with one tag (`sdks/go/v<x.y.z>`) — no mirror repo required. |
 
 Current scope includes **Sender** and **Provider**, and both aggregator-API and direct Gateway-contract off-ramp paths. The repository structure intentionally supports future expansion for other protocol parties.
 
@@ -365,15 +365,19 @@ git subtree split --prefix=sdks/python -b release/python
 
 Then tag and publish to PyPI in the Python repository pipeline.
 
-### 3) Go repository deployment (`paycrest/sdk-go`)
+### 3) Go module release (this monorepo)
+
+The Go SDK ships from `sdks/go/` directly — no mirror repo. Go's module
+graph resolves multi-module monorepos via `<repo>/<dir>/v<x.y.z>` tags:
 
 ```bash
-./scripts/release/release_go.sh 2.0.0
-git subtree split --prefix=sdks/go -b release/go
-# push release/go branch to paycrest/sdk-go
+./scripts/release/release_go.sh 2.1.0       # validates locally
+git tag sdks/go/v2.1.0
+git push origin sdks/go/v2.1.0
 ```
 
-In `sdk-go`, create and push tag `v<version>`.
+After the tag lands, `go get github.com/paycrest/sdk/sdks/go@v2.1.0`
+resolves immediately; `pkg.go.dev` picks it up within ~30 minutes.
 
 ### 4) Rust repository deployment (`paycrest/sdk-rust`)
 

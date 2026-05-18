@@ -14,7 +14,7 @@ import (
 	"os"
 	"strings"
 
-	sdk "github.com/paycrest/sdk-go/sdk"
+	sdk "github.com/paycrest/sdk/sdks/go/sdk"
 )
 
 // The real adapter would import:

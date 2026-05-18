@@ -3,7 +3,16 @@
 All notable changes to the Paycrest SDK monorepo are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/spec/v2.0.0.html). Each language package may patch independently for ecosystem fixes, but wire-level / public-surface changes are tracked as a coordinated release.
 
-## [Unreleased]
+## [2.1.0] — 2026-05-18
+
+### Changed — Go module path (breaking for any pre-release consumers)
+
+- Go module path moved from `github.com/paycrest/sdk-go` to `github.com/paycrest/sdk/sdks/go` so the Go SDK ships from this monorepo directly — no mirror repo, one tag (`sdks/go/v<x.y.z>`) per release. Update imports accordingly:
+  ```diff
+  - import sdk "github.com/paycrest/sdk-go/sdk"
+  + import sdk "github.com/paycrest/sdk/sdks/go/sdk"
+  ```
+- 2.0.0 was never published under the old path, so no live consumers are affected.
 
 ### Test gaps closed
 
@@ -83,6 +92,6 @@ Deferred to a follow-up cleanup PR (tracked in the PR description): Go `CreateOf
 - Network registry with bundled Gateway deployments for Base, Arbitrum One, BNB Smart Chain, Polygon, Scroll, Optimism, Celo, Lisk, Ethereum.
 
 ### Changed
-- Standardized Packagist package to `paycrest/sdk` (previously `paycrest/sdk-laravel`). Go module path stays `github.com/paycrest/sdk-go` because Go modules require the module path to match the repo URL; all other languages land on the canonical `paycrest/sdk` identity.
+- Standardized Packagist package to `paycrest/sdk` (previously `paycrest/sdk-laravel`); all other languages land on the canonical `paycrest/sdk` identity. (The Go module path moved to the monorepo subdirectory `github.com/paycrest/sdk/sdks/go` in 2.1.0.)
 
 See commit history for earlier changes.

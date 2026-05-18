@@ -36,15 +36,14 @@ Target repo: `paycrest/sdk-python`
 3. Push git tag `python-v<version>`.
 4. Mirror subtree `sdks/python` to dedicated repository.
 
-## Go repository deployment
+## Go monorepo deployment
 
-Target repo: `paycrest/sdk-go`
+Go module path: `github.com/paycrest/sdk/sdks/go` (subdirectory module — no mirror repo).
 
-1. Ensure module path remains `github.com/paycrest/sdk-go`.
-2. Run `./scripts/release/release_go.sh <version> --dry-run` to validate smoke/tests.
-3. Publish mode (`RELEASE_CONFIRM=YES ./scripts/release/release_go.sh <version> --publish`) validates again and prints operator steps since Go module release happens by tagging the target repository.
-4. Tag with semver in Go repository (e.g. `v1.2.0`).
-5. Mirror subtree `sdks/go` and create release tag.
+1. Run `./scripts/release/release_go.sh <version> --dry-run` to validate smoke/tests.
+2. Publish mode (`RELEASE_CONFIRM=YES ./scripts/release/release_go.sh <version> --publish`) validates again and prints operator steps.
+3. Tag the monorepo with `sdks/go/v<version>` (Go's subdirectory tag convention).
+4. Push the tag: `git push origin sdks/go/v<version>`. The Go proxy picks it up automatically; no mirror repo is required.
 
 ## Rust repository deployment
 

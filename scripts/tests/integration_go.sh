@@ -18,8 +18,13 @@ if [[ -z "${PAYCREST_SENDER_API_KEY:-}" ]]; then
     exit 0
 fi
 
-tmp_file="$(mktemp)"
-trap 'rm -f "$tmp_file"' EXIT
+# Write the integration program inside the module tree so `go run`
+# resolves `github.com/paycrest/sdk/sdks/go/sdk` against the in-tree
+# go.mod. A subdir under sdks/go keeps the temp file scoped to its
+# own package so it doesn't clash with the SDK's own files.
+tmp_dir="$(mktemp -d -p . integration.XXXXXX)"
+tmp_file="$tmp_dir/main.go"
+trap 'rm -rf "$tmp_dir"' EXIT
 
 cat > "$tmp_file" <<'EOF'
 package main
@@ -29,7 +34,7 @@ import (
 	"fmt"
 	"os"
 
-	sdk "github.com/paycrest/sdk-go/sdk"
+	sdk "github.com/paycrest/sdk/sdks/go/sdk"
 )
 
 func main() {
@@ -56,7 +61,7 @@ func main() {
 }
 EOF
 
-go1.26.0 run "$tmp_file"
+go1.26.0 run "$tmp_dir"
 
 if [[ -z "${PAYCREST_PROVIDER_API_KEY:-}" ]]; then
     echo "PAYCREST_PROVIDER_API_KEY not set, skipping Go provider integration test"
@@ -71,7 +76,7 @@ import (
 	"fmt"
 	"os"
 
-	sdk "github.com/paycrest/sdk-go/sdk"
+	sdk "github.com/paycrest/sdk/sdks/go/sdk"
 )
 
 func main() {
@@ -98,4 +103,4 @@ func main() {
 }
 EOF
 
-go1.26.0 run "$tmp_file"
+go1.26.0 run "$tmp_dir"
