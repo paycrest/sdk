@@ -5,7 +5,7 @@ Official Paycrest SDK for Go — sender, provider, and direct on-chain off-ramp 
 ## Install
 
 ```bash
-go get github.com/paycrest/sdk-go/sdk
+go get github.com/paycrest/sdk/sdks/go/sdk
 ```
 
 ## Quickstart
@@ -19,7 +19,7 @@ import (
     "log"
     "os"
 
-    sdk "github.com/paycrest/sdk-go/sdk"
+    sdk "github.com/paycrest/sdk/sdks/go/sdk"
 )
 
 func main() {

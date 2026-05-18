@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	sdk "github.com/paycrest/sdk-go/sdk"
+	sdk "github.com/paycrest/sdk/sdks/go/sdk"
 )
 
 func main() {

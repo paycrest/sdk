@@ -22,9 +22,9 @@ go1.26.0 test ./...
 
 cat <<EOF
 Go SDK release validated: $VERSION
-Next step in sdk-go repository:
-  git tag v$VERSION
-  git push origin v$VERSION
+Next step in this monorepo (subdirectory module — no mirror repo):
+  git tag sdks/go/v$VERSION
+  git push origin sdks/go/v$VERSION
 EOF
 
 if [[ "$MODE" == "dry-run" ]]; then
