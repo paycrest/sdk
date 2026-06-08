@@ -1,6 +1,6 @@
 {
   "name": "@paycrest/sdk",
-  "version": "2.1.0",
+  "version": "1.0.0",
   "description": "Official Paycrest SDK for Sender and Provider integrations",
   "type": "module",
   "main": "dist/index.js",

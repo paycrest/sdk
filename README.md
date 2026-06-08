@@ -371,12 +371,12 @@ The Go SDK ships from `sdks/go/` directly — no mirror repo. Go's module
 graph resolves multi-module monorepos via `<repo>/<dir>/v<x.y.z>` tags:
 
 ```bash
-./scripts/release/release_go.sh 2.1.0       # validates locally
-git tag sdks/go/v2.1.0
-git push origin sdks/go/v2.1.0
+./scripts/release/release_go.sh 1.0.0       # validates locally
+git tag sdks/go/v1.0.0
+git push origin sdks/go/v1.0.0
 ```
 
-After the tag lands, `go get github.com/paycrest/sdk/sdks/go@v2.1.0`
+After the tag lands, `go get github.com/paycrest/sdk/sdks/go@v1.0.0`
 resolves immediately; `pkg.go.dev` picks it up within ~30 minutes.
 
 ### 4) Rust repository deployment (`paycrest/sdk-rust`)
