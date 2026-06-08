@@ -832,7 +832,7 @@ dependencies = [
 
 [[package]]
 name = "paycrest-sdk"
-version = "2.1.0"
+version = "1.0.0"
 dependencies = [
  "aes-gcm",
  "async-trait",
