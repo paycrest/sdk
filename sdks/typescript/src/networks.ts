@@ -62,12 +62,6 @@ export const NETWORKS: Record<string, NetworkInfo> = {
     displayName: "Celo",
     gateway: "0xf418217e3f81092ef44b81c5c8336e6a6fdb0e4b",
   },
-  lisk: {
-    slug: "lisk",
-    chainId: 1135,
-    displayName: "Lisk",
-    gateway: "0xff0E00E0110C1FBb5315D276243497b66D3a4d8a",
-  },
   ethereum: {
     slug: "ethereum",
     chainId: 1,

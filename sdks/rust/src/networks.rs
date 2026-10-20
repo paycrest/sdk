@@ -59,12 +59,6 @@ const BUNDLED: &[NetworkInfo] = &[
         gateway: "0xf418217e3f81092ef44b81c5c8336e6a6fdb0e4b",
     },
     NetworkInfo {
-        slug: "lisk",
-        chain_id: 1135,
-        display_name: "Lisk",
-        gateway: "0xff0E00E0110C1FBb5315D276243497b66D3a4d8a",
-    },
-    NetworkInfo {
         slug: "ethereum",
         chain_id: 1,
         display_name: "Ethereum",

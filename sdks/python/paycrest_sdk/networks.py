@@ -29,7 +29,6 @@ NETWORKS: dict[str, NetworkInfo] = {
     "scroll": NetworkInfo("scroll", 534352, "Scroll", "0x663c5bfe7d44ba946c2dd4b2d1cf9580319f9338"),
     "optimism": NetworkInfo("optimism", 10, "Optimism", "0xd293fcd3dbc025603911853d893a4724cf9f70a0"),
     "celo": NetworkInfo("celo", 42220, "Celo", "0xf418217e3f81092ef44b81c5c8336e6a6fdb0e4b"),
-    "lisk": NetworkInfo("lisk", 1135, "Lisk", "0xff0E00E0110C1FBb5315D276243497b66D3a4d8a"),
     "ethereum": NetworkInfo("ethereum", 1, "Ethereum", "0x8d2c0d398832b814e3814802ff2dc8b8ef4381e5"),
 }
 

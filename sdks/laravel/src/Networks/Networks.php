@@ -24,7 +24,6 @@ final class Networks
         'scroll' => ['slug' => 'scroll', 'chainId' => 534352, 'displayName' => 'Scroll', 'gateway' => '0x663c5bfe7d44ba946c2dd4b2d1cf9580319f9338'],
         'optimism' => ['slug' => 'optimism', 'chainId' => 10, 'displayName' => 'Optimism', 'gateway' => '0xd293fcd3dbc025603911853d893a4724cf9f70a0'],
         'celo' => ['slug' => 'celo', 'chainId' => 42220, 'displayName' => 'Celo', 'gateway' => '0xf418217e3f81092ef44b81c5c8336e6a6fdb0e4b'],
-        'lisk' => ['slug' => 'lisk', 'chainId' => 1135, 'displayName' => 'Lisk', 'gateway' => '0xff0E00E0110C1FBb5315D276243497b66D3a4d8a'],
         'ethereum' => ['slug' => 'ethereum', 'chainId' => 1, 'displayName' => 'Ethereum', 'gateway' => '0x8d2c0d398832b814e3814802ff2dc8b8ef4381e5'],
     ];
 

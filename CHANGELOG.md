@@ -3,6 +3,12 @@
 All notable changes to the Paycrest SDK monorepo are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/spec/v2.0.0.html). Each language package may patch independently for ecosystem fixes, but wire-level / public-surface changes are tracked as a coordinated release.
 
+## [Unreleased]
+
+### Removed
+
+- Lisk (chain 1135) was removed from the bundled network registry in all five SDKs because Lisk Chain shuts down Oct 31, 2026 and Paycrest no longer supports it.
+
 ## [1.0.0] — 2026-06-08
 
 First public release across all five SDKs — TypeScript (`@paycrest/sdk`), Python (`paycrest-sdk`), Go (`github.com/paycrest/sdk/sdks/go`), Rust (`paycrest-sdk`), Laravel/PHP (`paycrest/sdk`). Prior `2.x` tags in this repo were internal pre-release work that was never published to any registry.
