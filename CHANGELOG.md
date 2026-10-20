@@ -7,7 +7,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning fol
 
 ### Removed
 
-- Lisk (chain 1135) was removed from the bundled network registry in all five SDKs because Lisk Chain shuts down Oct 31, 2026 and Paycrest no longer supports it.
+- Lisk (chain 1135), Scroll (chain 534352) and Optimism (chain 10) were removed from the bundled network registry in all five SDKs because Paycrest no longer supports them. Lisk Chain also shuts down Oct 31, 2026.
 
 ## [1.0.0] — 2026-06-08
 

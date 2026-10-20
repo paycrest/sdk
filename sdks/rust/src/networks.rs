@@ -41,18 +41,6 @@ const BUNDLED: &[NetworkInfo] = &[
         gateway: "0xfb411cc6385af50a562afcb441864e9d541cda67",
     },
     NetworkInfo {
-        slug: "scroll",
-        chain_id: 534352,
-        display_name: "Scroll",
-        gateway: "0x663c5bfe7d44ba946c2dd4b2d1cf9580319f9338",
-    },
-    NetworkInfo {
-        slug: "optimism",
-        chain_id: 10,
-        display_name: "Optimism",
-        gateway: "0xd293fcd3dbc025603911853d893a4724cf9f70a0",
-    },
-    NetworkInfo {
         slug: "celo",
         chain_id: 42220,
         display_name: "Celo",
